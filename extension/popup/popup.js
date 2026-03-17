@@ -43,8 +43,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     askBtn.disabled = true;
   }
 
-  // Check if there's a running or completed result to restore
-  if (lastResult) {
+  // Check if there's a running or completed result to restore (only for current URL)
+  if (lastResult && lastResult.url === currentUrl) {
     if (lastResult.status === 'running') {
       showLoading(lastResult.startTime);
       pollForResult();
@@ -179,11 +179,19 @@ function hideResult() {
 async function pollForResult() {
   const check = async () => {
     const result = await sendMessage({ action: 'getLastResult' });
-    if (!result || result.status !== 'running') {
+
+    // Stop polling if result is no longer for the current URL
+    if (!result || result.url !== currentUrl) {
       stopLoading();
-      if (result?.status === 'complete') {
+      askBtn.disabled = false;
+      return;
+    }
+
+    if (result.status !== 'running') {
+      stopLoading();
+      if (result.status === 'complete') {
         showResult(result);
-      } else if (result?.status === 'error') {
+      } else if (result.status === 'error') {
         showError(result.error);
       }
       askBtn.disabled = false;

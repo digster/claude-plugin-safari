@@ -32,3 +32,11 @@ Fix: Pass `--allowedTools` to the CLI to pre-authorize tools. Changes:
 4. Add Allowed Tools setting to settings UI
 5. Add script version detection (outdated script → reinstall notice)
 6. Add tests for allowedTools parsing and payload
+
+## 2026-03-17 (session 3) — Fix URL-Specific Cache in Popup
+
+The popup displays the cached `lastResult` from a previous URL even when the user navigates to a different page. The `lastResult` object already stores a `url` field (set by `runClaude()` in background.js), but the popup never validates it against the current tab's URL before displaying.
+
+Fix:
+1. Add URL guard to cached result restore: `if (lastResult && lastResult.url === currentUrl)`
+2. Add URL guard to `pollForResult()`: early-return when result URL doesn't match current tab URL
