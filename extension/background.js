@@ -165,8 +165,11 @@ async function verifyCli(cliPath) {
 
 // ── Message handler ──────────────────────────────────────────
 
-browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  const handler = async () => {
+// Promise-based listener — Safari MV3 natively resolves the returned Promise
+// as the message response. No sendResponse callback or `return true` needed,
+// which avoids channel-closing race conditions when the popup closes.
+browser.runtime.onMessage.addListener((message, _sender) => {
+  return (async () => {
     try {
       switch (message.action) {
         case 'runClaude':
@@ -199,15 +202,10 @@ browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           return { error: `Unknown action: ${message.action}` };
       }
     } catch (err) {
-      return { error: err.message };
+      console.error('Message handler error:', err);
+      return { error: err.message || 'Unknown error' };
     }
-  };
-
-  handler().then(sendResponse).catch(err => {
-    console.error('Message handler error:', err);
-    try { sendResponse({ error: err.message || 'Unknown error' }); } catch (_) {}
-  });
-  return true; // keep message channel open for async response
+  })();
 });
 
 // ── Initialization ───────────────────────────────────────────

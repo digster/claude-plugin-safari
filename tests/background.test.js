@@ -75,8 +75,9 @@ const browser = {
           return { result: 'mock response' };
       }
     },
-    onMessage: { addListener: () => {} },
-    onInstalled: { addListener: () => {} }
+    onMessage: { addListener: (cb) => { browser.runtime._onMessageCallback = cb; } },
+    onInstalled: { addListener: () => {} },
+    _onMessageCallback: null
   },
   tabs: {
     query: async () => [{ url: 'https://example.com' }]
@@ -321,6 +322,39 @@ async function runTests() {
   }
   assertEqual(addHistoryError, null, 'addToHistory does not throw when storage.set() fails');
   browser.storage.local.set = originalSet;
+
+  // Test: onMessage listener uses Promise-based pattern (not callback-based)
+  console.log('\nonMessage listener pattern:');
+  assert(
+    typeof browser.runtime._onMessageCallback === 'function',
+    'onMessage.addListener was called with a callback'
+  );
+
+  // The listener should return a thenable (Promise) — NOT `true`
+  const listenerReturn = browser.runtime._onMessageCallback(
+    { action: 'getSettings' }, {} /* sender */
+  );
+  assert(
+    listenerReturn && typeof listenerReturn.then === 'function',
+    'listener returns a Promise (not true/undefined)'
+  );
+
+  // Verify the Promise resolves to a valid settings object
+  const listenerResult = await listenerReturn;
+  assert(
+    listenerResult && typeof listenerResult === 'object' && 'prefix' in listenerResult,
+    'listener Promise resolves with settings object for getSettings action'
+  );
+
+  // Test: unknown action returns error via Promise
+  const unknownReturn = browser.runtime._onMessageCallback(
+    { action: 'nonExistentAction' }, {}
+  );
+  const unknownResult = await unknownReturn;
+  assert(
+    unknownResult && unknownResult.error && unknownResult.error.includes('nonExistentAction'),
+    'unknown action returns error message via Promise'
+  );
 
   // ── Summary ──────────────────────────────────────────────
 

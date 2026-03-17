@@ -8,7 +8,15 @@ const copyBtn = document.getElementById('copy-btn');
 // ── Load last result from storage ───────────────────────────
 
 document.addEventListener('DOMContentLoaded', async () => {
-  const lastResult = await sendMessage({ action: 'getLastResult' });
+  let lastResult = await sendMessage({ action: 'getLastResult' });
+
+  // Retry once if null — service worker may need time to wake after popup closes
+  // (popup triggers browser.tabs.create then immediately closes, which can briefly
+  // cycle the service worker before result.js sends its getLastResult message)
+  if (!lastResult) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    lastResult = await sendMessage({ action: 'getLastResult' });
+  }
 
   if (!lastResult || lastResult.status !== 'complete') {
     resultContent.innerHTML = '<p class="placeholder">No result available. Run a query from the extension popup first.</p>';

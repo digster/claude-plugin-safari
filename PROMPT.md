@@ -75,3 +75,7 @@ Fix: Wrap all `browser.storage.local` calls with try/catch + sensible fallbacks:
 4. **`addToHistory()`** — try/catch around `set()`
 5. **`onInstalled`** — `await` the `remove()` call, try/catch around both `get` and `remove`
 6. **4 new tests** — storage failure fallbacks for `getSettings`, `getHistory`, `saveSettings`, `addToHistory`
+
+## 2026-03-17 (session 8) — Fix Pop-out Page Empty + Cached Results Not Showing
+
+Fix two bugs: (1) pop-out page (result.html) remains empty even when popup just displayed content, (2) cached result not restoring in popup when reopening for a previously-queried URL. Root cause: background.js message listener uses callback-based `sendResponse` + `return true` pattern unreliable in Safari MV3. Fix by switching to Promise-based listener, adding retry logic to result.js, and adding tests.
