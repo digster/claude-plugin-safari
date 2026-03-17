@@ -263,3 +263,9 @@ function formatElapsed(seconds) {
   const secs = seconds % 60;
   return `${mins}m ${secs}s`;
 }
+
+// ── Exports for testing ──────────────────────────────────────
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { renderMarkdown, formatElapsed };
+}
