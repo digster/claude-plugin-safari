@@ -23,12 +23,21 @@ async function saveSettings(newSettings) {
 }
 
 async function getLastResult() {
-  const { lastResult } = await browser.storage.local.get('lastResult');
-  return lastResult || null;
+  try {
+    const response = await sendNativeMessage({ action: 'getStoredResult' });
+    return response?.result || null;
+  } catch (err) {
+    console.error('Failed to read result from disk:', err);
+    return null;
+  }
 }
 
 async function saveLastResult(result) {
-  await browser.storage.local.set({ lastResult: result });
+  try {
+    await sendNativeMessage({ action: 'storeResult', result: result });
+  } catch (err) {
+    console.error('Failed to save result to disk:', err);
+  }
 }
 
 async function getHistory() {
@@ -38,9 +47,9 @@ async function getHistory() {
 
 async function addToHistory(entry) {
   const history = await getHistory();
-  // Keep last 50 entries
+  // Keep last 25 entries (small footprint in browser.storage.local)
   history.unshift(entry);
-  if (history.length > 50) history.pop();
+  if (history.length > 25) history.pop();
   await browser.storage.local.set({ history });
 }
 
@@ -105,8 +114,8 @@ async function runClaude(url) {
       url,
       timestamp: Date.now(),
       resultPreview: typeof response?.result === 'string'
-        ? response.result.substring(0, 200)
-        : JSON.stringify(response).substring(0, 200)
+        ? response.result.substring(0, 100)
+        : JSON.stringify(response).substring(0, 100)
     });
 
     return result;
@@ -155,7 +164,11 @@ browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           return await getLastResult();
 
         case 'clearLastResult':
-          await saveLastResult(null);
+          try {
+            await sendNativeMessage({ action: 'clearStoredResult' });
+          } catch (err) {
+            console.error('Failed to clear stored result:', err);
+          }
           return { success: true };
 
         case 'getHistory':
@@ -186,6 +199,10 @@ browser.runtime.onInstalled.addListener(async () => {
   if (!settings) {
     await browser.storage.local.set({ settings: DEFAULT_SETTINGS });
   }
+
+  // Migration: remove lastResult from browser.storage.local
+  // (now stored on native disk to avoid ~5MB storage quota)
+  browser.storage.local.remove('lastResult');
 });
 
 // ── Exports for testing ──────────────────────────────────────
@@ -200,6 +217,7 @@ if (typeof module !== 'undefined' && module.exports) {
     getHistory,
     addToHistory,
     runClaude,
-    verifyCli
+    verifyCli,
+    sendNativeMessage
   };
 }

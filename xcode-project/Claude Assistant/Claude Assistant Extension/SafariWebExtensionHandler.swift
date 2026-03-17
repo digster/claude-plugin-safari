@@ -3,9 +3,12 @@
 //  Claude Assistant Extension
 //
 //  Handles native messages from the browser extension JS layer.
-//  Supports two actions:
+//  Supports actions:
 //    - runClaude: executes the Claude CLI via NSUserUnixTask (sandbox-safe) and returns the output
 //    - verifyCli: checks if the helper script is installed in Application Scripts
+//    - storeResult: writes a result dictionary to disk (bypasses browser.storage.local quota)
+//    - getStoredResult: reads the stored result from disk
+//    - clearStoredResult: deletes the stored result file
 //
 
 import SafariServices
@@ -34,6 +37,12 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
             handleRunClaude(context: context, message: msg)
         case "verifyCli":
             handleVerifyCli(context: context, message: msg)
+        case "storeResult":
+            handleStoreResult(context: context, message: msg)
+        case "getStoredResult":
+            handleGetStoredResult(context: context)
+        case "clearStoredResult":
+            handleClearStoredResult(context: context)
         default:
             sendResponse(context: context, data: ["error": "Unknown action: \(action)"])
         }
@@ -172,6 +181,115 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
             "path": cliPath,
             "setupRequired": !scriptInstalled
         ])
+    }
+
+    // MARK: - Disk Storage for Results
+    //
+    // These handlers bypass browser.storage.local (which has a ~5MB Safari quota)
+    // by writing result data directly to the extension's Application Support directory.
+    // The sandboxed extension can freely access its own container's Application Support.
+
+    /// Returns the storage directory URL, creating it if needed.
+    /// Path: <container>/Library/Application Support/ClaudeAssistant/
+    private func storageDirectory() -> URL? {
+        guard let appSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else {
+            return nil
+        }
+
+        let storageDir = appSupport.appendingPathComponent("ClaudeAssistant")
+
+        // Create directory if it doesn't exist
+        if !FileManager.default.fileExists(atPath: storageDir.path) {
+            do {
+                try FileManager.default.createDirectory(
+                    at: storageDir,
+                    withIntermediateDirectories: true,
+                    attributes: nil
+                )
+            } catch {
+                os_log(.error, log: log, "Failed to create storage directory: %{public}@", error.localizedDescription)
+                return nil
+            }
+        }
+
+        return storageDir
+    }
+
+    /// Write a result dictionary to lastResult.json on disk.
+    private func handleStoreResult(context: NSExtensionContext, message: [String: Any]) {
+        guard let storageDir = storageDirectory() else {
+            sendResponse(context: context, data: ["error": "Cannot access storage directory"])
+            return
+        }
+
+        let resultData = message["result"] as Any
+        let fileURL = storageDir.appendingPathComponent("lastResult.json")
+
+        do {
+            // Wrap in a container so we can store null/nil as { "result": null }
+            let wrapper: [String: Any] = ["result": resultData]
+            let jsonData = try JSONSerialization.data(withJSONObject: wrapper, options: [.prettyPrinted])
+            try jsonData.write(to: fileURL, options: .atomic)
+
+            os_log(.default, log: log, "Stored result to disk (%{public}d bytes)", jsonData.count)
+            sendResponse(context: context, data: ["success": true])
+        } catch {
+            os_log(.error, log: log, "Failed to store result: %{public}@", error.localizedDescription)
+            sendResponse(context: context, data: ["error": "Failed to store result: \(error.localizedDescription)"])
+        }
+    }
+
+    /// Read the stored result from lastResult.json on disk.
+    private func handleGetStoredResult(context: NSExtensionContext) {
+        guard let storageDir = storageDirectory() else {
+            sendResponse(context: context, data: ["result": NSNull()])
+            return
+        }
+
+        let fileURL = storageDir.appendingPathComponent("lastResult.json")
+
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            // No stored result — return null (not an error)
+            sendResponse(context: context, data: ["result": NSNull()])
+            return
+        }
+
+        do {
+            let jsonData = try Data(contentsOf: fileURL)
+            if let wrapper = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+                // Return the full wrapper which contains { "result": <data> }
+                sendResponse(context: context, data: wrapper)
+            } else {
+                sendResponse(context: context, data: ["result": NSNull()])
+            }
+        } catch {
+            os_log(.error, log: log, "Failed to read stored result: %{public}@", error.localizedDescription)
+            sendResponse(context: context, data: ["result": NSNull()])
+        }
+    }
+
+    /// Delete lastResult.json from disk.
+    private func handleClearStoredResult(context: NSExtensionContext) {
+        guard let storageDir = storageDirectory() else {
+            sendResponse(context: context, data: ["success": true])
+            return
+        }
+
+        let fileURL = storageDir.appendingPathComponent("lastResult.json")
+
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            do {
+                try FileManager.default.removeItem(at: fileURL)
+                os_log(.default, log: log, "Cleared stored result from disk")
+            } catch {
+                os_log(.error, log: log, "Failed to clear stored result: %{public}@", error.localizedDescription)
+            }
+        }
+
+        sendResponse(context: context, data: ["success": true])
     }
 
     // MARK: - Response Helper

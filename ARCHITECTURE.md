@@ -11,17 +11,17 @@ A Safari Web Extension that bridges the browser to a local Claude CLI binary. Th
 │  popup.js   │ ────────────────────────> │ background.js│ ──────────────────────> │ SafariWebExtensionHandler.swift│
 │  (UI)       │ <──────────────────────── │ (router)     │ <────────────────────── │ (NSUserUnixTask → helper script│
 │             │                           │              │                         │  → claude CLI)                 │
-└─────────────┘                           └──────┬───────┘                         └───────────────────────────────┘
-                                                 │
-┌─────────────┐    runtime.sendMessage          │ browser.storage.local
-│ settings.js │ ────────────────────────>       │
-│ (config)    │ <────────────────────────       ▼
-└─────────────┘                           ┌──────────────┐
-                                          │   Storage    │
-┌─────────────┐    reads from storage     │ - settings   │
-│ result.js   │ ────────────────────>     │ - lastResult │
-│ (pop-out)   │                           │ - history    │
-└─────────────┘                           └──────────────┘
+└─────────────┘                           └──────┬───────┘                         └──────────┬────────────────────┘
+                                                 │                                            │
+┌─────────────┐    runtime.sendMessage          │ browser.storage.local                      │ Native disk
+│ settings.js │ ────────────────────────>       │                                            │
+│ (config)    │ <────────────────────────       ▼                                            ▼
+└─────────────┘                           ┌──────────────┐                       ┌────────────────────┐
+                                          │   Storage    │                       │  Application Support│
+┌─────────────┐    reads from storage     │ - settings   │                       │  /ClaudeAssistant/  │
+│ result.js   │ ────────────────────>     │ - history    │                       │  - lastResult.json  │
+│ (pop-out)   │                           └──────────────┘                       └────────────────────┘
+└─────────────┘
 ```
 
 ## Key Components
@@ -39,7 +39,7 @@ A Safari Web Extension that bridges the browser to a local Claude CLI binary. Th
 
 | File | Purpose |
 |------|---------|
-| `SafariWebExtensionHandler.swift` | Receives `sendNativeMessage` calls from JS. Two actions: `runClaude` (uses `NSUserUnixTask` to execute a helper script that invokes the CLI) and `verifyCli` (checks if the helper script is installed). Runs sandboxed. |
+| `SafariWebExtensionHandler.swift` | Receives `sendNativeMessage` calls from JS. Actions: `runClaude` (uses `NSUserUnixTask` to execute a helper script that invokes the CLI), `verifyCli` (checks if the helper script is installed), `storeResult`/`getStoredResult`/`clearStoredResult` (disk-based result storage to bypass browser.storage.local quota). Runs sandboxed. |
 | `ViewController.swift` | App container UI — shows extension enable status, links to Safari preferences. Handles helper script installation via `NSSavePanel` to `~/Library/Application Scripts/<extension-bundle-id>/`. |
 | `run-claude.sh` (installed) | Helper script (v2) placed in Application Scripts dir. Runs **outside** the sandbox via `NSUserUnixTask`. Sets up `PATH`/`HOME` env, uses `shift 3` + `"$@"` to forward extra CLI flags (e.g., `--allowedTools`), and `exec`s the Claude CLI binary. |
 | `AppDelegate.swift` | Standard app delegate, terminates after last window closes. |
@@ -50,11 +50,12 @@ A Safari Web Extension that bridges the browser to a local Claude CLI binary. Th
 2. User clicks "Ask Claude" → `popup.js` sends `runClaude` message to `background.js`
 3. `background.js` reads settings, builds prompt string, parses `allowedTools` (comma-separated → array), calls `browser.runtime.sendNativeMessage()`
 4. `SafariWebExtensionHandler.swift` receives message, builds argument list `[cliPath, prompt, outputFormat, --allowedTools, tool1, ...]`, runs `run-claude.sh` via `NSUserUnixTask`
-5. Helper script (v2) uses `shift 3` + `"$@"` to forward extra CLI flags; executes `claude -p "<prompt>" --output-format json --allowedTools <tool> ...` outside the sandbox; output piped back to handler → `background.js` → stored in `browser.storage.local` → sent to `popup.js`
+5. Helper script (v2) uses `shift 3` + `"$@"` to forward extra CLI flags; executes `claude -p "<prompt>" --output-format json --allowedTools <tool> ...` outside the sandbox; output piped back to handler → `background.js` → stored on native disk via `storeResult` action → sent to `popup.js`
 6. `popup.js` renders result, shows metadata (cost, tokens, duration)
 
 ### Storage Schema
 
+**browser.storage.local** (small data, ~5MB Safari quota):
 ```javascript
 {
   settings: {
@@ -62,17 +63,23 @@ A Safari Web Extension that bridges the browser to a local Claude CLI binary. Th
     cliPath: "/path/to/claude",   // CLI binary location
     allowedTools: "WebFetch,WebSearch" // Comma-separated tools pre-authorized via --allowedTools
   },
-  lastResult: {
+  history: [                       // Capped at 25 entries, 100-char previews
+    { prompt: "...", url: "...", timestamp: 123, resultPreview: "..." }
+  ]
+}
+```
+
+**Native disk** (`<container>/Library/Application Support/ClaudeAssistant/lastResult.json`):
+```javascript
+{
+  result: {
     status: "running" | "complete" | "error",
     prompt: "Summarize https://...",
     url: "https://...",
     startTime: 1234567890,
     endTime: 1234567899,
     response: { result: "...", cost_usd: 0.01, ... }
-  },
-  history: [
-    { prompt: "...", url: "...", timestamp: 123, resultPreview: "..." }
-  ]
+  }
 }
 ```
 
@@ -87,7 +94,8 @@ A Safari Web Extension that bridges the browser to a local Claude CLI binary. Th
 | `--output-format json` from CLI | Structured response includes cost, token counts, duration for richer UI metadata |
 | `--allowedTools` pre-authorization | CLI runs headlessly (no TTY) so interactive permission prompts can't be answered. Tools like `WebFetch` are pre-authorized via `--allowedTools` to avoid blocking |
 | Helper script version detection | Containing app reads the installed script and checks for `"shift 3"` to determine if it's v2 (supports extra args). Outdated scripts trigger a reinstall notice |
-| `lastResult` stored in `browser.storage.local` | If popup closes during a long-running CLI call, the background continues and the result is recoverable |
+| `lastResult` on native disk (not browser.storage.local) | Safari MV3 has a ~5MB `browser.storage.local` quota. Claude responses (10-100KB+) caused `Exceeded storage quota` errors. Result data now goes through `sendNativeMessage` → Swift handler → JSON file on disk. The extension's sandboxed Application Support directory is accessible without entitlements |
+| History capped at 25 entries, 100-char previews | Safeguard to keep `browser.storage.local` well within quota; history stays in browser storage since it's small |
 | `browser.*` API (not `chrome.*`) in extension code | Safari's Manifest V3 uses the `browser` namespace; `chrome.*` works for some APIs but `browser` is canonical |
 
 ## Extension Permissions

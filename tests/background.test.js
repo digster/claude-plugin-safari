@@ -37,6 +37,9 @@ function assertEqual(actual, expected, message) {
 
 const mockStorage = {};
 
+// In-memory store that simulates native disk storage for lastResult
+let nativeDiskStore = {};
+
 const browser = {
   storage: {
     local: {
@@ -48,11 +51,30 @@ const browser = {
       },
       set: async (items) => {
         Object.assign(mockStorage, items);
+      },
+      remove: async (key) => {
+        if (typeof key === 'string') {
+          delete mockStorage[key];
+        }
       }
     }
   },
   runtime: {
-    sendNativeMessage: async () => ({ result: 'mock response' }),
+    sendNativeMessage: async (_id, payload) => {
+      // Route storage actions to in-memory disk store
+      switch (payload.action) {
+        case 'storeResult':
+          nativeDiskStore.lastResult = payload.result;
+          return { success: true };
+        case 'getStoredResult':
+          return { result: nativeDiskStore.lastResult || null };
+        case 'clearStoredResult':
+          delete nativeDiskStore.lastResult;
+          return { success: true };
+        default:
+          return { result: 'mock response' };
+      }
+    },
     onMessage: { addListener: () => {} },
     onInstalled: { addListener: () => {} }
   },
@@ -99,14 +121,14 @@ async function runTests() {
   assertEqual(overwritten.prefix, 'Review', 'overwrites prefix');
   assertEqual(overwritten.cliPath, '/usr/local/bin/claude', 'overwrites CLI path');
 
-  // Test: getLastResult when empty
-  console.log('\ngetLastResult:');
-  delete mockStorage.lastResult;
+  // Test: getLastResult when empty (uses native disk storage)
+  console.log('\ngetLastResult (native disk):');
+  nativeDiskStore = {};
   const noResult = await bg.getLastResult();
-  assertEqual(noResult, null, 'returns null when no result stored');
+  assertEqual(noResult, null, 'returns null when no result stored on disk');
 
-  // Test: saveLastResult and getLastResult
-  console.log('\nsaveLastResult:');
+  // Test: saveLastResult and getLastResult via native messaging
+  console.log('\nsaveLastResult (native disk):');
   const mockResult = {
     status: 'complete',
     prompt: 'Summarize https://example.com',
@@ -115,8 +137,33 @@ async function runTests() {
   };
   await bg.saveLastResult(mockResult);
   const retrieved = await bg.getLastResult();
-  assertEqual(retrieved.status, 'complete', 'stores and retrieves result status');
-  assertEqual(retrieved.prompt, 'Summarize https://example.com', 'stores and retrieves prompt');
+  assertEqual(retrieved.status, 'complete', 'stores and retrieves result status via native disk');
+  assertEqual(retrieved.prompt, 'Summarize https://example.com', 'stores and retrieves prompt via native disk');
+
+  // Test: saveLastResult sends storeResult action to native handler
+  console.log('\nsaveLastResult native message format:');
+  let capturedPayload = null;
+  const originalSendNative = browser.runtime.sendNativeMessage;
+  browser.runtime.sendNativeMessage = async (_id, payload) => {
+    capturedPayload = payload;
+    // Still route through the real mock for storage
+    return originalSendNative(_id, payload);
+  };
+  await bg.saveLastResult({ status: 'test' });
+  assertEqual(capturedPayload.action, 'storeResult', 'sends storeResult action');
+  assert(capturedPayload.result !== undefined, 'includes result in payload');
+  assertEqual(capturedPayload.result.status, 'test', 'result data is passed through');
+  browser.runtime.sendNativeMessage = originalSendNative;
+
+  // Test: getLastResult sends getStoredResult action to native handler
+  console.log('\ngetLastResult native message format:');
+  browser.runtime.sendNativeMessage = async (_id, payload) => {
+    capturedPayload = payload;
+    return originalSendNative(_id, payload);
+  };
+  await bg.getLastResult();
+  assertEqual(capturedPayload.action, 'getStoredResult', 'sends getStoredResult action');
+  browser.runtime.sendNativeMessage = originalSendNative;
 
   // Test: getHistory when empty
   console.log('\ngetHistory:');
@@ -135,21 +182,21 @@ async function runTests() {
   assertEqual(history[0].prompt, 'test2', 'most recent entry is first (unshift)');
   assertEqual(history[1].prompt, 'test1', 'older entry is second');
 
-  // Test: addToHistory caps at 50
-  console.log('\naddToHistory (cap):');
+  // Test: addToHistory caps at 25 (reduced from 50 to save storage quota)
+  console.log('\naddToHistory (cap at 25):');
   delete mockStorage.history;
-  for (let i = 0; i < 55; i++) {
+  for (let i = 0; i < 30; i++) {
     await bg.addToHistory({ prompt: `entry-${i}`, timestamp: i });
   }
   const cappedHistory = await bg.getHistory();
-  assertEqual(cappedHistory.length, 50, 'caps history at 50 entries');
-  assertEqual(cappedHistory[0].prompt, 'entry-54', 'most recent entry is first after cap');
+  assertEqual(cappedHistory.length, 25, 'caps history at 25 entries');
+  assertEqual(cappedHistory[0].prompt, 'entry-29', 'most recent entry is first after cap');
 
   // Test: clearLastResult via saveLastResult(null)
   console.log('\nclearLastResult:');
   await bg.saveLastResult(null);
   const cleared = await bg.getLastResult();
-  assertEqual(cleared, null, 'clears last result');
+  assertEqual(cleared, null, 'clears last result on native disk');
 
   // Test: DEFAULT_SETTINGS.allowedTools exists
   console.log('\nallowedTools defaults:');
@@ -160,12 +207,15 @@ async function runTests() {
   // Test: allowedTools parsing (comma-separated → array)
   console.log('\nallowedTools parsing:');
   delete mockStorage.settings;
-  // Reset to defaults so runClaude uses DEFAULT_SETTINGS.allowedTools
   await bg.saveSettings({ allowedTools: 'WebFetch, Read , Bash' });
 
-  // Capture what gets sent to native handler
+  // Capture what gets sent to native handler (for runClaude action)
   let capturedNativePayload = null;
   browser.runtime.sendNativeMessage = async (_id, payload) => {
+    // Capture runClaude payloads, route storage through the original mock
+    if (payload.action && ['storeResult', 'getStoredResult', 'clearStoredResult'].includes(payload.action)) {
+      return originalSendNative(_id, payload);
+    }
     capturedNativePayload = payload;
     return { result: 'mock response' };
   };
@@ -193,7 +243,31 @@ async function runTests() {
     'allowedTools array matches parsed setting');
 
   // Restore original mock
-  browser.runtime.sendNativeMessage = async () => ({ result: 'mock response' });
+  browser.runtime.sendNativeMessage = originalSendNative;
+
+  // Test: saveLastResult handles native message failure gracefully
+  console.log('\nsaveLastResult error handling:');
+  browser.runtime.sendNativeMessage = async () => {
+    throw new Error('Native messaging unavailable');
+  };
+  // Should not throw — just logs the error
+  let saveError = null;
+  try {
+    await bg.saveLastResult({ status: 'test' });
+  } catch (err) {
+    saveError = err;
+  }
+  assertEqual(saveError, null, 'saveLastResult does not throw on native message failure');
+  browser.runtime.sendNativeMessage = originalSendNative;
+
+  // Test: getLastResult returns null on native message failure
+  console.log('\ngetLastResult error handling:');
+  browser.runtime.sendNativeMessage = async () => {
+    throw new Error('Native messaging unavailable');
+  };
+  const failedResult = await bg.getLastResult();
+  assertEqual(failedResult, null, 'getLastResult returns null on native message failure');
+  browser.runtime.sendNativeMessage = originalSendNative;
 
   // ── Summary ──────────────────────────────────────────────
 

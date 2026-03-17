@@ -52,3 +52,12 @@ Fix:
 4. Add null check to settings.js save handler
 5. Add `.catch()` to background.js message handler chain
 6. Update popup test mocks from callback to Promise pattern, add 3 new tests
+
+## 2026-03-17 (session 6) — Fix Storage Quota Exceeded Error: Native Disk Storage
+
+Safari MV3 extensions have a ~5MB `browser.storage.local` quota. Storing full Claude CLI responses (10-100KB+) in `lastResult` exceeded this limit. Solution: move `lastResult` storage to native disk via the existing Swift `SafariWebExtensionHandler`, keep only small data (`settings`, `history`) in `browser.storage.local`.
+
+Changes:
+1. **SafariWebExtensionHandler.swift**: Add `storeResult`, `getStoredResult`, `clearStoredResult` actions + `storageDirectory()` helper. Writes to `<container>/Library/Application Support/ClaudeAssistant/lastResult.json`
+2. **background.js**: Rewrite `saveLastResult`/`getLastResult` to use `sendNativeMessage` instead of `browser.storage.local`. Update `clearLastResult` handler similarly. Reduce history cap 50→25, preview 200→100 chars. Add `browser.storage.local.remove('lastResult')` migration in `onInstalled`
+3. **tests/background.test.js**: Mock `sendNativeMessage` with in-memory disk store for storage actions. Update history cap test 50→25. Add error-handling tests for native message failures
