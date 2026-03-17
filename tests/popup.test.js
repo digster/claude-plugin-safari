@@ -146,14 +146,14 @@ function createMocks({ tabUrl, lastResult, settings } = {}) {
       create: async () => ({})
     },
     runtime: {
-      sendMessage(msg, callback) {
-        // Route based on action, matching popup.js's sendMessage usage
+      sendMessage(msg) {
+        // Route based on action, matching popup.js's Promise-based sendMessage usage
         if (msg.action === 'getSettings') {
-          callback(settings || { prefix: 'Summarize' });
+          return Promise.resolve(settings || { prefix: 'Summarize' });
         } else if (msg.action === 'getLastResult') {
-          callback(lastResult || null);
+          return Promise.resolve(lastResult || null);
         } else {
-          callback(null);
+          return Promise.resolve(null);
         }
       },
       openOptionsPage: () => {},
@@ -343,15 +343,15 @@ async function runTests() {
     assert(mocks.timeouts.length > 0, 'poll setup: setTimeout was called');
 
     // NOW override sendMessage so the poll callback gets a different-URL result
-    global.browser.runtime.sendMessage = (msg, callback) => {
+    global.browser.runtime.sendMessage = (msg) => {
       if (msg.action === 'getLastResult') {
-        callback({
+        return Promise.resolve({
           status: 'complete',
           url: 'https://other-site.com/different',
           response: { result: 'Wrong page result' }
         });
       } else {
-        callback(null);
+        return Promise.resolve(null);
       }
     };
 
@@ -385,12 +385,8 @@ async function runTests() {
     await mocks.domContentLoadedCb();
 
     // Override sendMessage so poll gets null
-    global.browser.runtime.sendMessage = (msg, callback) => {
-      if (msg.action === 'getLastResult') {
-        callback(null);
-      } else {
-        callback(null);
-      }
+    global.browser.runtime.sendMessage = (msg) => {
+      return Promise.resolve(null);
     };
 
     // Execute poll timeout(s)
@@ -401,6 +397,100 @@ async function runTests() {
     assert(
       mocks.elements['loading'].classList.contains('hidden'),
       'poll: null result → loading is hidden (stopped)'
+    );
+  }
+
+  // ── Null/error result handling ──────────────────────────────
+
+  console.log('\nNull/error result handling:');
+
+  // Test 8: Click handler with null result shows error
+  {
+    const mocks = createMocks({
+      tabUrl: 'https://example.com/page',
+      lastResult: null
+    });
+
+    requireFreshPopup();
+    await mocks.domContentLoadedCb();
+
+    // Override sendMessage to return null for runClaude (simulating no response)
+    global.browser.runtime.sendMessage = (msg) => {
+      return Promise.resolve(null);
+    };
+
+    // Trigger the click handler
+    const clickHandlers = mocks.elements['ask-btn']._listeners['click'];
+    assert(clickHandlers && clickHandlers.length > 0, 'click handler is registered');
+    await clickHandlers[0]();
+
+    assert(
+      !mocks.elements['error-area'].classList.contains('hidden'),
+      'null result from click → error area is visible'
+    );
+    assert(
+      mocks.elements['error-area'].textContent.includes('No response received'),
+      'null result from click → shows "No response received" message'
+    );
+    assert(
+      !mocks.elements['ask-btn'].disabled,
+      'null result from click → ask button is re-enabled'
+    );
+  }
+
+  // Test 9: Click handler with unknown status shows error
+  {
+    const mocks = createMocks({
+      tabUrl: 'https://example.com/page',
+      lastResult: null
+    });
+
+    requireFreshPopup();
+    await mocks.domContentLoadedCb();
+
+    // Override sendMessage to return an unexpected status
+    global.browser.runtime.sendMessage = (msg) => {
+      if (msg.action === 'runClaude') {
+        return Promise.resolve({ status: 'unknown', error: 'Something went wrong' });
+      }
+      return Promise.resolve(null);
+    };
+
+    const clickHandlers = mocks.elements['ask-btn']._listeners['click'];
+    await clickHandlers[0]();
+
+    assert(
+      !mocks.elements['error-area'].classList.contains('hidden'),
+      'unknown status from click → error area is visible'
+    );
+    assert(
+      mocks.elements['error-area'].textContent.includes('Something went wrong'),
+      'unknown status from click → shows the error message from result'
+    );
+  }
+
+  // Test 10: DOMContentLoaded initialization error is caught
+  {
+    const mocks = createMocks({
+      tabUrl: 'https://example.com/page',
+      lastResult: null
+    });
+
+    // Override tabs.query to throw an error
+    global.browser.tabs.query = async () => {
+      throw new Error('Tabs API unavailable');
+    };
+
+    requireFreshPopup();
+    await mocks.domContentLoadedCb();
+
+    assert(
+      !mocks.elements['error-area'].classList.contains('hidden'),
+      'initialization error → error area is visible'
+    );
+    assert(
+      mocks.elements['error-area'].textContent.includes('Failed to initialize'),
+      'initialization error → shows init failure message'
     );
   }
 

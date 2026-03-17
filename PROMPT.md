@@ -40,3 +40,15 @@ The popup displays the cached `lastResult` from a previous URL even when the use
 Fix:
 1. Add URL guard to cached result restore: `if (lastResult && lastResult.url === currentUrl)`
 2. Add URL guard to `pollForResult()`: early-return when result URL doesn't match current tab URL
+
+## 2026-03-17 (session 5) — Fix sendMessage: Loader and "Ask Claude" Not Working
+
+The "Ask Claude" button doesn't show a loader and doesn't function. Root cause: `browser.runtime.sendMessage(message, resolve)` — Safari's `browser.*` MV3 API returns a Promise, the second arg is NOT a callback. The outer `new Promise` never resolves, so `DOMContentLoaded`'s `Promise.all` hangs and the button stays disabled.
+
+Fix:
+1. Replace callback-based `sendMessage` with Promise-based `async function sendMessage(msg)` in all 3 extension files (popup.js, settings.js, result.js)
+2. Add try/catch to popup.js `DOMContentLoaded` to surface initialization errors
+3. Add else branch to click handler for null/unexpected results
+4. Add null check to settings.js save handler
+5. Add `.catch()` to background.js message handler chain
+6. Update popup test mocks from callback to Promise pattern, add 3 new tests

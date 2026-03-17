@@ -30,7 +30,9 @@ saveBtn.addEventListener('click', async () => {
 
   const result = await sendMessage({ action: 'saveSettings', settings });
 
-  if (result?.error) {
+  if (!result) {
+    showMessage('Failed to save settings. Extension may not be responding.', 'error');
+  } else if (result.error) {
     showMessage('Error saving settings: ' + result.error, 'error');
   } else {
     showMessage('Settings saved.', 'success');
@@ -76,8 +78,11 @@ function showVerifyStatus(text, ok) {
   verifyStatus.classList.remove('hidden');
 }
 
-function sendMessage(message) {
-  return new Promise((resolve) => {
-    browser.runtime.sendMessage(message, resolve);
-  });
+async function sendMessage(message) {
+  try {
+    return await browser.runtime.sendMessage(message);
+  } catch (e) {
+    console.error('sendMessage failed:', e);
+    return null;
+  }
 }

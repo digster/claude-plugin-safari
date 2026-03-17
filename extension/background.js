@@ -172,7 +172,10 @@ browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
   };
 
-  handler().then(sendResponse);
+  handler().then(sendResponse).catch(err => {
+    console.error('Message handler error:', err);
+    try { sendResponse({ error: err.message || 'Unknown error' }); } catch (_) {}
+  });
   return true; // keep message channel open for async response
 });
 

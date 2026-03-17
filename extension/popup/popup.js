@@ -19,40 +19,45 @@ let elapsedTimer = null;
 // ── Initialization ──────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', async () => {
-  // Load settings and current tab URL in parallel
-  const [settings, tabs, lastResult] = await Promise.all([
-    sendMessage({ action: 'getSettings' }),
-    browser.tabs.query({ active: true, currentWindow: true }),
-    sendMessage({ action: 'getLastResult' })
-  ]);
+  try {
+    // Load settings and current tab URL in parallel
+    const [settings, tabs, lastResult] = await Promise.all([
+      sendMessage({ action: 'getSettings' }),
+      browser.tabs.query({ active: true, currentWindow: true }),
+      sendMessage({ action: 'getLastResult' })
+    ]);
 
-  // Display prefix
-  const prefix = settings?.prefix || 'Summarize';
-  prefixDisplay.textContent = prefix;
+    // Display prefix
+    const prefix = settings?.prefix || 'Summarize';
+    prefixDisplay.textContent = prefix;
 
-  // Display current tab URL
-  if (tabs && tabs.length > 0 && tabs[0].url) {
-    currentUrl = tabs[0].url;
-    urlDisplay.textContent = currentUrl;
+    // Display current tab URL
+    if (tabs && tabs.length > 0 && tabs[0].url) {
+      currentUrl = tabs[0].url;
+      urlDisplay.textContent = currentUrl;
 
-    // Disable for non-http URLs (about:blank, settings, etc.)
-    const isValidUrl = currentUrl.startsWith('http://') || currentUrl.startsWith('https://');
-    askBtn.disabled = !isValidUrl;
-  } else {
-    urlDisplay.textContent = 'No active tab';
-    askBtn.disabled = true;
-  }
-
-  // Check if there's a running or completed result to restore (only for current URL)
-  if (lastResult && lastResult.url === currentUrl) {
-    if (lastResult.status === 'running') {
-      showLoading(lastResult.startTime);
-      pollForResult();
-    } else if (lastResult.status === 'complete') {
-      showResult(lastResult);
-    } else if (lastResult.status === 'error') {
-      showError(lastResult.error);
+      // Disable for non-http URLs (about:blank, settings, etc.)
+      const isValidUrl = currentUrl.startsWith('http://') || currentUrl.startsWith('https://');
+      askBtn.disabled = !isValidUrl;
+    } else {
+      urlDisplay.textContent = 'No active tab';
+      askBtn.disabled = true;
     }
+
+    // Check if there's a running or completed result to restore (only for current URL)
+    if (lastResult && lastResult.url === currentUrl) {
+      if (lastResult.status === 'running') {
+        showLoading(lastResult.startTime);
+        pollForResult();
+      } else if (lastResult.status === 'complete') {
+        showResult(lastResult);
+      } else if (lastResult.status === 'error') {
+        showError(lastResult.error);
+      }
+    }
+  } catch (err) {
+    console.error('Popup initialization failed:', err);
+    showError('Failed to initialize. Please try reopening the popup.');
   }
 });
 
@@ -75,6 +80,9 @@ askBtn.addEventListener('click', async () => {
     askBtn.disabled = false;
   } else if (result?.status === 'complete') {
     showResult(result);
+    askBtn.disabled = false;
+  } else {
+    showError(result?.error || 'No response received. Check that the extension is enabled.');
     askBtn.disabled = false;
   }
 });
@@ -251,10 +259,13 @@ function escapeHtml(text) {
 
 // ── Messaging helper ────────────────────────────────────────
 
-function sendMessage(message) {
-  return new Promise((resolve) => {
-    browser.runtime.sendMessage(message, resolve);
-  });
+async function sendMessage(message) {
+  try {
+    return await browser.runtime.sendMessage(message);
+  } catch (e) {
+    console.error('sendMessage failed:', e);
+    return null;
+  }
 }
 
 function formatElapsed(seconds) {

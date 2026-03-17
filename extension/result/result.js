@@ -113,8 +113,11 @@ function escapeHtml(text) {
 
 // ── Messaging helper ────────────────────────────────────────
 
-function sendMessage(message) {
-  return new Promise((resolve) => {
-    browser.runtime.sendMessage(message, resolve);
-  });
+async function sendMessage(message) {
+  try {
+    return await browser.runtime.sendMessage(message);
+  } catch (e) {
+    console.error('sendMessage failed:', e);
+    return null;
+  }
 }
