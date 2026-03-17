@@ -61,3 +61,17 @@ Changes:
 1. **SafariWebExtensionHandler.swift**: Add `storeResult`, `getStoredResult`, `clearStoredResult` actions + `storageDirectory()` helper. Writes to `<container>/Library/Application Support/ClaudeAssistant/lastResult.json`
 2. **background.js**: Rewrite `saveLastResult`/`getLastResult` to use `sendNativeMessage` instead of `browser.storage.local`. Update `clearLastResult` handler similarly. Reduce history cap 50→25, preview 200→100 chars. Add `browser.storage.local.remove('lastResult')` migration in `onInstalled`
 3. **tests/background.test.js**: Mock `sendNativeMessage` with in-memory disk store for storage actions. Update history cap test 50→25. Add error-handling tests for native message failures
+
+## 2026-03-17 (session 7) — Fix Safari `browser.storage.local.get()` Failures Breaking Popup
+
+After commit `575077b` (moved `lastResult` to native disk), two bugs:
+1. **Cached content not showing** — `onInstalled` migration deleted old data without copying; re-processing also fails (bug 2), so no new cache written.
+2. **`storageArea.get()` error on re-process** — `runClaude()` → `getSettings()` → `browser.storage.local.get('settings')` throws → popup shows error. Root cause: Safari MV3's `browser.storage.local` API failing, exacerbated by the un-awaited `browser.storage.local.remove('lastResult')` in `onInstalled`.
+
+Fix: Wrap all `browser.storage.local` calls with try/catch + sensible fallbacks:
+1. **`getSettings()`** — try/catch, fall back to `DEFAULT_SETTINGS`
+2. **`saveSettings()`** — try/catch around `set()`, still returns merged settings
+3. **`getHistory()`** — try/catch, fall back to `[]`
+4. **`addToHistory()`** — try/catch around `set()`
+5. **`onInstalled`** — `await` the `remove()` call, try/catch around both `get` and `remove`
+6. **4 new tests** — storage failure fallbacks for `getSettings`, `getHistory`, `saveSettings`, `addToHistory`

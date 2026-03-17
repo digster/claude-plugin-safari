@@ -11,14 +11,23 @@ const DEFAULT_SETTINGS = {
 // ── Storage helpers ──────────────────────────────────────────
 
 async function getSettings() {
-  const { settings } = await browser.storage.local.get('settings');
-  return { ...DEFAULT_SETTINGS, ...settings };
+  try {
+    const { settings } = await browser.storage.local.get('settings');
+    return { ...DEFAULT_SETTINGS, ...settings };
+  } catch (err) {
+    console.error('Failed to read settings from storage:', err);
+    return { ...DEFAULT_SETTINGS };
+  }
 }
 
 async function saveSettings(newSettings) {
   const current = await getSettings();
   const merged = { ...current, ...newSettings };
-  await browser.storage.local.set({ settings: merged });
+  try {
+    await browser.storage.local.set({ settings: merged });
+  } catch (err) {
+    console.error('Failed to write settings to storage:', err);
+  }
   return merged;
 }
 
@@ -41,8 +50,13 @@ async function saveLastResult(result) {
 }
 
 async function getHistory() {
-  const { history } = await browser.storage.local.get('history');
-  return history || [];
+  try {
+    const { history } = await browser.storage.local.get('history');
+    return history || [];
+  } catch (err) {
+    console.error('Failed to read history from storage:', err);
+    return [];
+  }
 }
 
 async function addToHistory(entry) {
@@ -50,7 +64,11 @@ async function addToHistory(entry) {
   // Keep last 25 entries (small footprint in browser.storage.local)
   history.unshift(entry);
   if (history.length > 25) history.pop();
-  await browser.storage.local.set({ history });
+  try {
+    await browser.storage.local.set({ history });
+  } catch (err) {
+    console.error('Failed to write history to storage:', err);
+  }
 }
 
 // ── Native messaging bridge ─────────────────────────────────
@@ -195,14 +213,22 @@ browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 // ── Initialization ───────────────────────────────────────────
 
 browser.runtime.onInstalled.addListener(async () => {
-  const { settings } = await browser.storage.local.get('settings');
-  if (!settings) {
-    await browser.storage.local.set({ settings: DEFAULT_SETTINGS });
+  try {
+    const { settings } = await browser.storage.local.get('settings');
+    if (!settings) {
+      await browser.storage.local.set({ settings: DEFAULT_SETTINGS });
+    }
+  } catch (err) {
+    console.error('Failed to initialize settings on install:', err);
   }
 
   // Migration: remove lastResult from browser.storage.local
   // (now stored on native disk to avoid ~5MB storage quota)
-  browser.storage.local.remove('lastResult');
+  try {
+    await browser.storage.local.remove('lastResult');
+  } catch (err) {
+    console.error('Failed to remove legacy lastResult from storage:', err);
+  }
 });
 
 // ── Exports for testing ──────────────────────────────────────

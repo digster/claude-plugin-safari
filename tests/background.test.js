@@ -269,6 +269,59 @@ async function runTests() {
   assertEqual(failedResult, null, 'getLastResult returns null on native message failure');
   browser.runtime.sendNativeMessage = originalSendNative;
 
+  // Test: getSettings falls back to DEFAULT_SETTINGS when storage.get() throws
+  console.log('\ngetSettings storage failure fallback:');
+  const originalGet = browser.storage.local.get;
+  browser.storage.local.get = async () => {
+    throw new Error('Invalid call to storageArea.get()');
+  };
+  const fallbackSettings = await bg.getSettings();
+  assertEqual(fallbackSettings.prefix, bg.DEFAULT_SETTINGS.prefix,
+    'getSettings returns DEFAULT_SETTINGS.prefix when storage.get() throws');
+  assertEqual(fallbackSettings.cliPath, bg.DEFAULT_SETTINGS.cliPath,
+    'getSettings returns DEFAULT_SETTINGS.cliPath when storage.get() throws');
+  browser.storage.local.get = originalGet;
+
+  // Test: getHistory falls back to [] when storage.get() throws
+  console.log('\ngetHistory storage failure fallback:');
+  browser.storage.local.get = async () => {
+    throw new Error('Invalid call to storageArea.get()');
+  };
+  const fallbackHistory = await bg.getHistory();
+  assert(Array.isArray(fallbackHistory), 'getHistory returns array when storage.get() throws');
+  assertEqual(fallbackHistory.length, 0, 'getHistory returns empty array when storage.get() throws');
+  browser.storage.local.get = originalGet;
+
+  // Test: saveSettings doesn't throw when storage.set() fails
+  console.log('\nsaveSettings storage failure resilience:');
+  const originalSet = browser.storage.local.set;
+  browser.storage.local.set = async () => {
+    throw new Error('Exceeded storage quota');
+  };
+  let saveSettingsError = null;
+  try {
+    const result = await bg.saveSettings({ prefix: 'Test' });
+    assert(result.prefix === 'Test', 'saveSettings returns merged settings even when storage.set() fails');
+  } catch (err) {
+    saveSettingsError = err;
+  }
+  assertEqual(saveSettingsError, null, 'saveSettings does not throw when storage.set() fails');
+  browser.storage.local.set = originalSet;
+
+  // Test: addToHistory doesn't throw when storage.set() fails
+  console.log('\naddToHistory storage failure resilience:');
+  browser.storage.local.set = async () => {
+    throw new Error('Exceeded storage quota');
+  };
+  let addHistoryError = null;
+  try {
+    await bg.addToHistory({ prompt: 'should not throw', timestamp: Date.now() });
+  } catch (err) {
+    addHistoryError = err;
+  }
+  assertEqual(addHistoryError, null, 'addToHistory does not throw when storage.set() fails');
+  browser.storage.local.set = originalSet;
+
   // ── Summary ──────────────────────────────────────────────
 
   console.log(`\n${'─'.repeat(40)}`);
