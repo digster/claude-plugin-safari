@@ -11,9 +11,22 @@
 </head>
 <body>
     <img src="../Icon.png" width="128" height="128" alt="Claude Assistant Icon">
-    <p class="state-unknown">You can turn on Claude Assistant’s extension in Safari Extensions preferences.</p>
-    <p class="state-on">Claude Assistant’s extension is currently on. You can turn it off in Safari Extensions preferences.</p>
-    <p class="state-off">Claude Assistant’s extension is currently off. You can turn it on in Safari Extensions preferences.</p>
-    <button class="open-preferences">Quit and Open Safari Extensions Preferences…</button>
+    <p class="state-unknown">You can turn on Claude Assistant's extension in the Extensions section of Safari Settings.</p>
+    <p class="state-on">Claude Assistant's extension is currently on. You can turn it off in the Extensions section of Safari Settings.</p>
+    <p class="state-off">Claude Assistant's extension is currently off. You can turn it on in the Extensions section of Safari Settings.</p>
+    <button class="open-preferences">Quit and Open Safari Settings...</button>
+
+    <hr class="divider">
+
+    <div id="setup-section">
+        <div id="setup-needed" style="display: none;">
+            <p class="setup-message">Helper script not installed. Click below to enable CLI access for the extension.</p>
+            <button id="install-script">Install Helper Script</button>
+        </div>
+        <div id="setup-complete" style="display: none;">
+            <p class="setup-message setup-ok">Helper script installed. The extension is ready to use.</p>
+            <button id="reinstall-script" class="secondary">Reinstall Helper Script</button>
+        </div>
+    </div>
 </body>
 </html>

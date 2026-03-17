@@ -43,3 +43,37 @@ body.state-off :is(.state-on, .state-unknown) {
 button {
     font-size: 1em;
 }
+
+/* Setup section divider */
+.divider {
+    width: 80%;
+    border: none;
+    border-top: 1px solid rgba(128, 128, 128, 0.3);
+    margin: var(--spacing) 0;
+}
+
+/* Script installation status section */
+#setup-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: calc(var(--spacing) / 2);
+}
+
+.setup-message {
+    font-size: 0.9em;
+    opacity: 0.8;
+}
+
+.setup-ok {
+    color: #34c759;
+}
+
+button.secondary {
+    font-size: 0.85em;
+    opacity: 0.7;
+}
+
+button.secondary:hover {
+    opacity: 1;
+}
