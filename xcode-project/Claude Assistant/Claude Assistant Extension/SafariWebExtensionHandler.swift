@@ -48,6 +48,7 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         let cliPath = message["cliPath"] as? String ?? "/Users/ishan/.local/bin/claude"
         let prompt = message["prompt"] as? String ?? ""
         let outputFormat = message["outputFormat"] as? String ?? "json"
+        let allowedTools = message["allowedTools"] as? [String] ?? []
 
         // Locate the Application Scripts directory for this extension
         guard let scriptsDir = try? FileManager.default.url(
@@ -73,6 +74,18 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
             return
         }
 
+        // If allowedTools are requested, verify the helper script supports extra args (v2)
+        if !allowedTools.isEmpty {
+            if let scriptContent = try? String(contentsOf: scriptURL, encoding: .utf8),
+               !scriptContent.contains("shift 3") {
+                sendResponse(context: context, data: [
+                    "error": "Helper script is outdated and doesn't support --allowedTools. Please open the Claude Assistant app and click 'Reinstall Helper Script'.",
+                    "setupRequired": true
+                ])
+                return
+            }
+        }
+
         do {
             let task = try NSUserUnixTask(url: scriptURL)
 
@@ -82,9 +95,17 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
             task.standardOutput = stdoutPipe.fileHandleForWriting
             task.standardError = stderrPipe.fileHandleForWriting
 
-            os_log(.default, log: log, "Executing helper script with CLI path: %{public}@", cliPath)
+            // Build arguments: base args + --allowedTools flags for each tool
+            var arguments = [cliPath, prompt, outputFormat]
+            for tool in allowedTools {
+                arguments.append("--allowedTools")
+                arguments.append(tool)
+            }
 
-            task.execute(withArguments: [cliPath, prompt, outputFormat]) { [weak self] error in
+            os_log(.default, log: log, "Executing helper script with CLI path: %{public}@, allowedTools: %{public}@",
+                   cliPath, allowedTools.joined(separator: ", "))
+
+            task.execute(withArguments: arguments) { [weak self] error in
                 guard let self = self else { return }
 
                 // Close write ends so reads complete with EOF

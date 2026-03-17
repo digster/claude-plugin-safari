@@ -13,15 +13,22 @@ let extensionBundleIdentifier = "com.digster.Claude-Assistant.Extension"
 
 /// Helper script content that bridges the sandboxed extension to the CLI binary.
 /// The script runs outside the sandbox via NSUserUnixTask, allowing it to exec the Claude CLI.
+/// v2: Uses shift 3 + "$@" to forward extra CLI flags (e.g., --allowedTools).
 private let helperScriptContent = """
 #!/bin/bash
-# Helper script for Claude Assistant Safari Extension
+# Helper script for Claude Assistant Safari Extension (v2)
 # Executes Claude CLI with provided arguments from outside the app sandbox.
-# $1 = CLI binary path, $2 = prompt text, $3 = output format
+# $1 = CLI path, $2 = prompt, $3 = output format, $4+ = extra CLI flags
 export HOME="$HOME"
 export PATH="/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin:/usr/bin:/bin:$PATH"
-exec "$1" -p "$2" --output-format "$3"
+CLI="$1"; PROMPT="$2"; FORMAT="$3"
+shift 3
+exec "$CLI" -p "$PROMPT" --output-format "$FORMAT" "$@"
 """
+
+/// Marker string used to detect whether the installed helper script supports extra CLI flags.
+/// If the installed script doesn't contain this, the user needs to reinstall.
+private let scriptVersionMarker = "shift 3"
 
 class ViewController: NSViewController, WKNavigationDelegate, WKScriptMessageHandler {
 
@@ -60,10 +67,15 @@ class ViewController: NSViewController, WKNavigationDelegate, WKScriptMessageHan
             }
         }
 
-        // Check if the helper script is already installed
+        // Check if the helper script is installed and up-to-date (supports extra CLI flags)
         let scriptInstalled = FileManager.default.fileExists(atPath: helperScriptURL.path)
+        var scriptUpToDate = false
+        if scriptInstalled,
+           let content = try? String(contentsOf: helperScriptURL, encoding: .utf8) {
+            scriptUpToDate = content.contains(scriptVersionMarker)
+        }
         DispatchQueue.main.async {
-            webView.evaluateJavaScript("showSetupStatus(\(scriptInstalled))")
+            webView.evaluateJavaScript("showSetupStatus(\(scriptInstalled), \(scriptUpToDate))")
         }
     }
 
@@ -111,7 +123,7 @@ class ViewController: NSViewController, WKNavigationDelegate, WKScriptMessageHan
                 )
 
                 DispatchQueue.main.async {
-                    self.webView.evaluateJavaScript("showSetupStatus(true)")
+                    self.webView.evaluateJavaScript("showSetupStatus(true, true)")
                 }
             } catch {
                 DispatchQueue.main.async {

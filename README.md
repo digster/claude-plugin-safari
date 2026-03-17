@@ -35,6 +35,7 @@ A Safari Web Extension that runs the [Claude CLI](https://docs.anthropic.com/en/
    - Click the extension icon → gear icon (or Safari → Settings → Extensions → Claude Assistant → Preferences)
    - Set your preferred prefix prompt
    - Verify the Claude CLI path
+   - Configure **Allowed Tools** — comma-separated list of CLI tools Claude can use without interactive prompting (default: `WebFetch,WebSearch`). Since the extension runs headlessly, tools that normally require permission approval must be pre-authorized here.
 
 ## Usage
 
@@ -76,8 +77,10 @@ tests/               # Unit tests
 
 ## Important Notes
 
-- The App Sandbox is **disabled** on the extension target to allow `Process()` execution of the Claude CLI. This means the extension cannot be distributed via the Mac App Store — it's designed as a personal developer tool.
-- The extension uses `browser.runtime.sendNativeMessage()` to communicate with the Swift handler, which runs the CLI binary directly.
+- The App Sandbox is **enabled** on both targets. CLI execution uses `NSUserUnixTask` with a helper script installed in `~/Library/Application Scripts/`. The containing app uses `NSSavePanel` for script installation.
+- The extension uses `browser.runtime.sendNativeMessage()` to communicate with the Swift handler, which runs the CLI via the helper script.
+- **Allowed Tools:** Since the CLI runs headlessly (no TTY), interactive permission prompts can't be answered. Tools like `WebFetch` must be pre-authorized via `--allowedTools`. Configure this in the extension settings (default: `WebFetch,WebSearch`).
+- If you update the extension, the containing app will detect outdated helper scripts and prompt you to reinstall.
 
 ## License
 

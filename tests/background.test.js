@@ -151,6 +151,50 @@ async function runTests() {
   const cleared = await bg.getLastResult();
   assertEqual(cleared, null, 'clears last result');
 
+  // Test: DEFAULT_SETTINGS.allowedTools exists
+  console.log('\nallowedTools defaults:');
+  assert(typeof bg.DEFAULT_SETTINGS.allowedTools === 'string', 'allowedTools is a string in DEFAULT_SETTINGS');
+  assert(bg.DEFAULT_SETTINGS.allowedTools.includes('WebFetch'), 'default allowedTools includes WebFetch');
+  assert(bg.DEFAULT_SETTINGS.allowedTools.includes('WebSearch'), 'default allowedTools includes WebSearch');
+
+  // Test: allowedTools parsing (comma-separated → array)
+  console.log('\nallowedTools parsing:');
+  delete mockStorage.settings;
+  // Reset to defaults so runClaude uses DEFAULT_SETTINGS.allowedTools
+  await bg.saveSettings({ allowedTools: 'WebFetch, Read , Bash' });
+
+  // Capture what gets sent to native handler
+  let capturedNativePayload = null;
+  browser.runtime.sendNativeMessage = async (_id, payload) => {
+    capturedNativePayload = payload;
+    return { result: 'mock response' };
+  };
+
+  await bg.runClaude('https://example.com');
+  assert(capturedNativePayload !== null, 'native message was sent');
+  assertEqual(capturedNativePayload.allowedTools, ['WebFetch', 'Read', 'Bash'],
+    'parses comma-separated allowedTools with trimming');
+
+  // Test: empty allowedTools string → empty array
+  console.log('\nallowedTools empty parsing:');
+  await bg.saveSettings({ allowedTools: '' });
+  capturedNativePayload = null;
+  await bg.runClaude('https://example.com');
+  assertEqual(capturedNativePayload.allowedTools, [],
+    'empty allowedTools string produces empty array');
+
+  // Test: allowedTools included in native message payload
+  console.log('\nallowedTools in native payload:');
+  await bg.saveSettings({ allowedTools: 'WebFetch,WebSearch' });
+  capturedNativePayload = null;
+  await bg.runClaude('https://example.com');
+  assert(Array.isArray(capturedNativePayload.allowedTools), 'allowedTools is an array in native payload');
+  assertEqual(capturedNativePayload.allowedTools, ['WebFetch', 'WebSearch'],
+    'allowedTools array matches parsed setting');
+
+  // Restore original mock
+  browser.runtime.sendNativeMessage = async () => ({ result: 'mock response' });
+
   // ── Summary ──────────────────────────────────────────────
 
   console.log(`\n${'─'.repeat(40)}`);

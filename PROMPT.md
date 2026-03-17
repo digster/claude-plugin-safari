@@ -10,7 +10,7 @@ Key difference: This extension needs to execute a local CLI binary (`/Users/isha
 
 UI: Popup panel (primary) with pop-out tab (for long responses). Dark theme, Linear-inspired design.
 
-## 2026-03-17 — Fix Safari Extension Not Appearing in Preferences
+## 2026-03-17 (session 1) — Fix Safari Extension Not Appearing in Preferences
 
 The extension builds successfully but doesn't appear in Safari → Settings → Extensions. Root cause: `ENABLE_APP_SANDBOX = NO` on the extension target — Safari requires sandboxed extensions.
 
@@ -20,3 +20,15 @@ Fix:
 3. Helper script (`run-claude.sh`) installed via `NSSavePanel` to `~/Library/Application Scripts/<bundle-id>/`
 4. Update deployment target from 10.14 to 14.0
 5. Add script setup flow to the containing app's ViewController
+
+## 2026-03-17 (session 2) — Pre-authorize CLI Tools via `--allowedTools`
+
+The extension runs Claude CLI headlessly (no TTY). When Claude needs interactive permission to use tools like `WebFetch`, it responds with "please approve in your terminal" but there's no terminal.
+
+Fix: Pass `--allowedTools` to the CLI to pre-authorize tools. Changes:
+1. Update helper script to forward extra args via `shift 3` + `"$@"`
+2. Parse `allowedTools` from settings (comma-separated) → array in native message
+3. Build `--allowedTools <tool>` args in Swift handler
+4. Add Allowed Tools setting to settings UI
+5. Add script version detection (outdated script → reinstall notice)
+6. Add tests for allowedTools parsing and payload

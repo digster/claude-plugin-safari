@@ -2,6 +2,7 @@
 
 const prefixInput = document.getElementById('prefix-input');
 const cliPathInput = document.getElementById('cli-path-input');
+const allowedToolsInput = document.getElementById('allowed-tools-input');
 const verifyBtn = document.getElementById('verify-btn');
 const verifyStatus = document.getElementById('verify-status');
 const saveBtn = document.getElementById('save-btn');
@@ -14,6 +15,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (settings) {
     prefixInput.value = settings.prefix || '';
     cliPathInput.value = settings.cliPath || '';
+    allowedToolsInput.value = settings.allowedTools || '';
   }
 });
 
@@ -22,7 +24,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 saveBtn.addEventListener('click', async () => {
   const settings = {
     prefix: prefixInput.value.trim(),
-    cliPath: cliPathInput.value.trim()
+    cliPath: cliPathInput.value.trim(),
+    allowedTools: allowedToolsInput.value.trim()
   };
 
   const result = await sendMessage({ action: 'saveSettings', settings });

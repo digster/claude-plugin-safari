@@ -41,16 +41,16 @@ A Safari Web Extension that bridges the browser to a local Claude CLI binary. Th
 |------|---------|
 | `SafariWebExtensionHandler.swift` | Receives `sendNativeMessage` calls from JS. Two actions: `runClaude` (uses `NSUserUnixTask` to execute a helper script that invokes the CLI) and `verifyCli` (checks if the helper script is installed). Runs sandboxed. |
 | `ViewController.swift` | App container UI — shows extension enable status, links to Safari preferences. Handles helper script installation via `NSSavePanel` to `~/Library/Application Scripts/<extension-bundle-id>/`. |
-| `run-claude.sh` (installed) | Helper script placed in Application Scripts dir. Runs **outside** the sandbox via `NSUserUnixTask`. Sets up `PATH`/`HOME` env and `exec`s the Claude CLI binary. |
+| `run-claude.sh` (installed) | Helper script (v2) placed in Application Scripts dir. Runs **outside** the sandbox via `NSUserUnixTask`. Sets up `PATH`/`HOME` env, uses `shift 3` + `"$@"` to forward extra CLI flags (e.g., `--allowedTools`), and `exec`s the Claude CLI binary. |
 | `AppDelegate.swift` | Standard app delegate, terminates after last window closes. |
 
 ### Data Flow
 
 1. User clicks extension icon → `popup.js` loads, queries active tab URL
 2. User clicks "Ask Claude" → `popup.js` sends `runClaude` message to `background.js`
-3. `background.js` reads settings, builds prompt string, calls `browser.runtime.sendNativeMessage()`
-4. `SafariWebExtensionHandler.swift` receives message, runs `run-claude.sh` via `NSUserUnixTask` with args `[cliPath, prompt, outputFormat]`
-5. Helper script executes `claude -p "<prompt>" --output-format json` outside the sandbox; output piped back to handler → `background.js` → stored in `browser.storage.local` → sent to `popup.js`
+3. `background.js` reads settings, builds prompt string, parses `allowedTools` (comma-separated → array), calls `browser.runtime.sendNativeMessage()`
+4. `SafariWebExtensionHandler.swift` receives message, builds argument list `[cliPath, prompt, outputFormat, --allowedTools, tool1, ...]`, runs `run-claude.sh` via `NSUserUnixTask`
+5. Helper script (v2) uses `shift 3` + `"$@"` to forward extra CLI flags; executes `claude -p "<prompt>" --output-format json --allowedTools <tool> ...` outside the sandbox; output piped back to handler → `background.js` → stored in `browser.storage.local` → sent to `popup.js`
 6. `popup.js` renders result, shows metadata (cost, tokens, duration)
 
 ### Storage Schema
@@ -59,7 +59,8 @@ A Safari Web Extension that bridges the browser to a local Claude CLI binary. Th
 {
   settings: {
     prefix: "Summarize",          // Prompt prefix text
-    cliPath: "/path/to/claude"    // CLI binary location
+    cliPath: "/path/to/claude",   // CLI binary location
+    allowedTools: "WebFetch,WebSearch" // Comma-separated tools pre-authorized via --allowedTools
   },
   lastResult: {
     status: "running" | "complete" | "error",
@@ -84,6 +85,8 @@ A Safari Web Extension that bridges the browser to a local Claude CLI binary. Th
 | App Sandbox **enabled** on both targets | Safari requires sandboxed extensions to appear in preferences. CLI execution uses `NSUserUnixTask` + a helper script installed in Application Scripts, which runs outside the sandbox |
 | Helper script installed via NSSavePanel | The containing app uses `NSSavePanel` to get user authorization to write `run-claude.sh` into `~/Library/Application Scripts/<extension-bundle-id>/` — Apple's recommended pattern for sandboxed script installation |
 | `--output-format json` from CLI | Structured response includes cost, token counts, duration for richer UI metadata |
+| `--allowedTools` pre-authorization | CLI runs headlessly (no TTY) so interactive permission prompts can't be answered. Tools like `WebFetch` are pre-authorized via `--allowedTools` to avoid blocking |
+| Helper script version detection | Containing app reads the installed script and checks for `"shift 3"` to determine if it's v2 (supports extra args). Outdated scripts trigger a reinstall notice |
 | `lastResult` stored in `browser.storage.local` | If popup closes during a long-running CLI call, the background continues and the result is recoverable |
 | `browser.*` API (not `chrome.*`) in extension code | Safari's Manifest V3 uses the `browser` namespace; `chrome.*` works for some APIs but `browser` is canonical |
 

@@ -15,10 +15,18 @@ function show(enabled, useSettingsInsteadOfPreferences) {
     }
 }
 
-// Show or hide the setup status section based on whether the helper script is installed
-function showSetupStatus(installed) {
+// Show or hide the setup status section based on whether the helper script is installed and up-to-date.
+// @param {boolean} installed — whether run-claude.sh exists
+// @param {boolean} upToDate — whether the script supports extra CLI flags (v2)
+function showSetupStatus(installed, upToDate) {
     document.getElementById('setup-needed').style.display = installed ? 'none' : 'block';
     document.getElementById('setup-complete').style.display = installed ? 'block' : 'none';
+
+    // Show update notice if script exists but is outdated (missing v2 shift 3 support)
+    const updateNotice = document.getElementById('update-needed');
+    if (updateNotice) {
+        updateNotice.style.display = (installed && !upToDate) ? 'block' : 'none';
+    }
 }
 
 function openPreferences() {
@@ -32,3 +40,4 @@ function installScript() {
 document.querySelector("button.open-preferences").addEventListener("click", openPreferences);
 document.getElementById("install-script").addEventListener("click", installScript);
 document.getElementById("reinstall-script").addEventListener("click", installScript);
+document.getElementById("update-script").addEventListener("click", installScript);
