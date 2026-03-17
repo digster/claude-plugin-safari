@@ -1,0 +1,28 @@
+# macOS
+.DS_Store
+*.swp
+*~
+
+# Xcode build artifacts
+xcode-project/**/build/
+xcode-project/**/DerivedData/
+xcode-project/**/*.xcuserdata/
+xcode-project/**/*.xcworkspace/xcuserdata/
+*.xcuserdata
+DerivedData/
+
+# Node
+node_modules/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+
+# Test artifacts
+*.png.test
+screenshots/

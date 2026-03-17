@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Assistant — Settings</title>
+  <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <div class="settings">
+    <header>
+      <h1>Claude Assistant Settings</h1>
+    </header>
+
+    <!-- Prefix prompt -->
+    <div class="field">
+      <label for="prefix-input">Prompt Prefix</label>
+      <textarea id="prefix-input" rows="3" placeholder="e.g., Summarize, Explain, Review the code at"></textarea>
+      <p class="hint">This text is prepended to the current page URL when sent to Claude.</p>
+    </div>
+
+    <!-- CLI path -->
+    <div class="field">
+      <label for="cli-path-input">Claude CLI Path</label>
+      <div class="input-row">
+        <input type="text" id="cli-path-input" placeholder="/Users/ishan/.local/bin/claude">
+        <button id="verify-btn" class="verify-btn">Verify</button>
+      </div>
+      <div id="verify-status" class="verify-status hidden"></div>
+    </div>
+
+    <!-- Actions -->
+    <div class="actions">
+      <button id="save-btn" class="primary-btn">Save Settings</button>
+    </div>
+
+    <!-- Status message -->
+    <div id="message" class="message hidden"></div>
+  </div>
+
+  <script src="settings.js"></script>
+</body>
+</html>

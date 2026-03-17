@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Result</title>
+  <link rel="stylesheet" href="result.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Claude Assistant</h1>
+      <div class="header-actions">
+        <button id="copy-btn" class="action-btn">Copy</button>
+      </div>
+    </header>
+
+    <!-- Prompt used -->
+    <div class="prompt-display" id="prompt-display"></div>
+
+    <!-- Result content -->
+    <div class="result-content" id="result-content">
+      <p class="placeholder">No result available. Run a query from the extension popup first.</p>
+    </div>
+
+    <!-- Metadata -->
+    <footer id="result-meta" class="result-meta"></footer>
+  </div>
+
+  <script src="result.js"></script>
+</body>
+</html>
