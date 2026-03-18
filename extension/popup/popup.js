@@ -39,6 +39,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       currentTabId = tabs[0].id;
       urlDisplay.textContent = currentUrl;
 
+      // Clear badge immediately — opening the popup means user is looking at this tab
+      sendMessage({ action: 'clearBadge', tabId: currentTabId });
+
       // Disable for non-http URLs (about:blank, settings, etc.)
       const isValidUrl = currentUrl.startsWith('http://') || currentUrl.startsWith('https://');
       askBtn.disabled = !isValidUrl;
@@ -57,11 +60,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         pollForResult();
       } else if (lastResult.status === 'complete') {
         showResult(lastResult);
-        // Clear badge — user has seen the result
-        sendMessage({ action: 'clearBadge', url: currentUrl });
       } else if (lastResult.status === 'error') {
         showError(lastResult.error);
-        sendMessage({ action: 'clearBadge', url: currentUrl });
       } else if (lastResult.status === 'cancelled') {
         showCancelled();
       }
@@ -92,13 +92,9 @@ askBtn.addEventListener('click', async () => {
     askBtn.disabled = false;
   } else if (result?.status === 'error') {
     showError(result.error);
-    // Clear badge — user sees the error in the popup
-    sendMessage({ action: 'clearBadge', url: currentUrl });
     askBtn.disabled = false;
   } else if (result?.status === 'complete') {
     showResult(result);
-    // Clear badge — user sees the result in the popup
-    sendMessage({ action: 'clearBadge', url: currentUrl });
     askBtn.disabled = false;
   } else {
     showError(result?.error || 'No response received. Check that the extension is enabled.');
@@ -235,10 +231,8 @@ async function pollForResult() {
       stopLoading();
       if (result.status === 'complete') {
         showResult(result);
-        sendMessage({ action: 'clearBadge', url: currentUrl });
       } else if (result.status === 'error') {
         showError(result.error);
-        sendMessage({ action: 'clearBadge', url: currentUrl });
       } else if (result.status === 'cancelled') {
         showCancelled();
       }

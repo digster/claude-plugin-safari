@@ -693,7 +693,7 @@ async function runTests() {
 
   console.log('\nBadge clearing:');
 
-  // Test 15: Popup sends clearBadge on init when complete result found
+  // Test 15: Popup sends clearBadge with tabId on init (unconditional)
   {
     const mocks = createMocks({
       tabUrl: 'https://example.com/badge-clear',
@@ -711,13 +711,13 @@ async function runTests() {
       'popup sends clearBadge on init when complete result found'
     );
     assertEqual(
-      mocks.clearBadgeMessages[0].url,
-      'https://example.com/badge-clear',
-      'clearBadge message includes current URL'
+      mocks.clearBadgeMessages[0].tabId,
+      123,
+      'clearBadge message includes tabId (not URL)'
     );
   }
 
-  // Test 16: Popup sends clearBadge on init when error result found
+  // Test 16: Popup sends clearBadge with tabId on init for error status
   {
     const mocks = createMocks({
       tabUrl: 'https://example.com/badge-error',
@@ -732,11 +732,16 @@ async function runTests() {
 
     assert(
       mocks.clearBadgeMessages.length > 0,
-      'popup sends clearBadge on init when error result found'
+      'popup sends clearBadge on init for error status'
+    );
+    assertEqual(
+      mocks.clearBadgeMessages[0].tabId,
+      123,
+      'clearBadge for error includes tabId'
     );
   }
 
-  // Test 17: Popup does NOT send clearBadge when status is running
+  // Test 17: Popup sends clearBadge unconditionally — even for running status
   {
     const mocks = createMocks({
       tabUrl: 'https://example.com/running',
@@ -749,10 +754,14 @@ async function runTests() {
     requireFreshPopup();
     await mocks.domContentLoadedCb();
 
+    assert(
+      mocks.clearBadgeMessages.length > 0,
+      'popup sends clearBadge even for running status (unconditional on init)'
+    );
     assertEqual(
-      mocks.clearBadgeMessages.length,
-      0,
-      'popup does NOT send clearBadge when status is running'
+      mocks.clearBadgeMessages[0].tabId,
+      123,
+      'clearBadge for running includes tabId'
     );
   }
 
@@ -785,7 +794,7 @@ async function runTests() {
     );
   }
 
-  // Test 19: Poll sends clearBadge when result completes
+  // Test 19: Poll does not send additional clearBadge (init already cleared)
   {
     const mocks = createMocks({
       tabUrl: 'https://example.com/poll-badge',
@@ -798,6 +807,9 @@ async function runTests() {
 
     requireFreshPopup();
     await mocks.domContentLoadedCb();
+
+    // Init already sent one clearBadge
+    const initClearCount = mocks.clearBadgeMessages.length;
 
     // Override sendMessage so poll gets a complete result
     global.browser.runtime.sendMessage = (msg) => {
@@ -819,9 +831,10 @@ async function runTests() {
       if (t.fn) await t.fn();
     }
 
-    assert(
-      mocks.clearBadgeMessages.length > 0,
-      'poll sends clearBadge when result completes'
+    assertEqual(
+      mocks.clearBadgeMessages.length,
+      initClearCount,
+      'poll does not send additional clearBadge (init already handled it)'
     );
   }
 

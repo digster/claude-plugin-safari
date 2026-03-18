@@ -136,7 +136,7 @@ Changes:
 7. **tests/background.test.js**: 11 new tests (cancel state, native message, resilience, race conditions, message handler)
 8. **tests/popup.test.js**: 4 new tests (stop button, cancelled init, cancelled polling, cancelled click handler)
 
-## 2026-03-18 — Green Dot Badge Notification on Toolbar Icon
+## 2026-03-18 (session 1) — Green Dot Badge Notification on Toolbar Icon
 
 Fetches can take 30+ seconds. When the user switches tabs or closes the popup, there's no visual indicator that the fetch completed. Add a green dot badge on the extension toolbar icon so the user can glance at it and know a result is ready without opening the popup.
 
@@ -147,3 +147,14 @@ Changes:
 2. **popup.js**: Capture `currentTabId` from active tab, send with `runClaude`, send `clearBadge` messages when displaying complete/error results (init, click, poll)
 3. **tests/background.test.js**: Add `browser.action` mock, tab event listener mocks, 14 new badge test cases
 4. **tests/popup.test.js**: Add `clearBadgeMessages`/`runClaudeMessages` tracking, add `id` to mock tabs, 5 new badge test cases
+
+## 2026-03-18 (session 2) — Smaller Green Dot via Canvas Compositing
+
+Safari's `setBadgeText(' ')` renders a large, fixed-size badge (~40% of icon). Replace with canvas-based icon compositing for a smaller, subtler dot (~15% of icon size) in the top-right corner.
+
+Replace `setBadgeText`/`setBadgeBackgroundColor` with `setIcon({ imageData })`:
+1. Load original icon PNGs (16px, 32px) into a canvas
+2. Draw a small green circle in the top-right corner
+3. Call `browser.action.setIcon({ imageData, tabId })` to apply per-tab
+4. Cache generated `ImageData` so canvas work happens once per color
+5. Popup sends single unconditional `clearBadge` with `tabId` on init (replaces per-branch URL-based clears)

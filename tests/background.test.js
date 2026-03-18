@@ -108,6 +108,7 @@ const browser = {
           return { result: 'mock response' };
       }
     },
+    getURL: (path) => path,
     onMessage: { addListener: (cb) => { browser.runtime._onMessageCallback = cb; } },
     onInstalled: { addListener: () => {} },
     _onMessageCallback: null
@@ -124,14 +125,9 @@ const browser = {
     _onRemovedCallback: null
   },
   action: {
-    _badges: {},
-    setBadgeText: ({ text, tabId }) => {
-      if (!browser.action._badges[tabId]) browser.action._badges[tabId] = {};
-      browser.action._badges[tabId].text = text;
-    },
-    setBadgeBackgroundColor: ({ color, tabId }) => {
-      if (!browser.action._badges[tabId]) browser.action._badges[tabId] = {};
-      browser.action._badges[tabId].color = color;
+    _icons: {},
+    setIcon: ({ path, imageData, tabId }) => {
+      browser.action._icons[tabId] = path ? { path } : { imageData };
     }
   }
 };
@@ -139,6 +135,46 @@ const browser = {
 // Make browser available globally for the module
 global.browser = browser;
 global.chrome = browser;
+
+// Mock Image constructor for canvas compositing in setBadge
+global.Image = class {
+  set onload(fn) {
+    this._onload = fn;
+    // Simulate immediate load completion on next microtask
+    Promise.resolve().then(() => fn());
+  }
+  get onload() { return this._onload; }
+  set onerror(fn) { this._onerror = fn; }
+  get onerror() { return this._onerror; }
+  set src(val) { this._src = val; }
+  get src() { return this._src; }
+};
+
+// Mock document.createElement for canvas used by createDotIcon
+global.document = {
+  createElement: (tag) => {
+    if (tag === 'canvas') {
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          drawImage: () => {},
+          beginPath: () => {},
+          arc: () => {},
+          fill: () => {},
+          getImageData: (x, y, w, h) => ({
+            width: w,
+            height: h,
+            data: new Uint8ClampedArray(w * h * 4)
+          }),
+          set fillStyle(v) { this._fillStyle = v; },
+          get fillStyle() { return this._fillStyle; }
+        })
+      };
+    }
+    return {};
+  }
+};
 
 // ── Load the module ─────────────────────────────────────────
 
@@ -710,50 +746,68 @@ async function runTests() {
   const handlerCancelState = await bg.getLastResult('https://handler-cancel.com');
   assertEqual(handlerCancelState.status, 'cancelled', 'message handler saves cancelled state via cancelClaude');
 
-  // ── Badge notification tests ────────────────────────────
+  // ── Badge notification tests (canvas-based icon overlay) ──
 
-  // Test: setBadge sets green dot for 'complete'
+  // Test: setBadge sets green dot icon for 'complete'
   console.log('\nsetBadge:');
-  browser.action._badges = {};
-  bg.setBadge(42, 'complete');
-  assertEqual(browser.action._badges[42].text, ' ', 'setBadge complete sets text to space');
-  assertEqual(browser.action._badges[42].color, '#34C759', 'setBadge complete sets green color');
+  browser.action._icons = {};
+  await bg.setBadge(42, 'complete');
+  assert(browser.action._icons[42]?.imageData, 'setBadge complete sets imageData');
+  assert(browser.action._icons[42].imageData[16], 'setBadge complete includes 16px icon');
+  assert(browser.action._icons[42].imageData[32], 'setBadge complete includes 32px icon');
 
-  // Test: setBadge sets red dot for 'error'
-  browser.action._badges = {};
-  bg.setBadge(42, 'error');
-  assertEqual(browser.action._badges[42].text, ' ', 'setBadge error sets text to space');
-  assertEqual(browser.action._badges[42].color, '#FF3B30', 'setBadge error sets red color');
+  // Test: setBadge sets red dot icon for 'error'
+  browser.action._icons = {};
+  await bg.setBadge(42, 'error');
+  assert(browser.action._icons[42]?.imageData, 'setBadge error sets imageData');
+  assert(browser.action._icons[42].imageData[16], 'setBadge error includes 16px icon');
 
-  // Test: setBadge(null) clears badge
-  bg.setBadge(42, null);
-  assertEqual(browser.action._badges[42].text, '', 'setBadge null clears text');
+  // Test: setBadge(null) restores original icon paths
+  browser.action._icons = {};
+  await bg.setBadge(42, null);
+  assert(browser.action._icons[42]?.path, 'setBadge null restores path');
+  assertEqual(browser.action._icons[42].path[16], 'icons/icon-16.png', 'setBadge null restores 16px path');
+  assertEqual(browser.action._icons[42].path[32], 'icons/icon-32.png', 'setBadge null restores 32px path');
 
   // Test: clearBadge shorthand
   console.log('\nclearBadge:');
-  browser.action._badges = {};
-  bg.setBadge(99, 'complete');
-  bg.clearBadge(99);
-  assertEqual(browser.action._badges[99].text, '', 'clearBadge clears the badge');
+  browser.action._icons = {};
+  await bg.setBadge(99, 'complete');
+  await bg.clearBadge(99);
+  assert(browser.action._icons[99]?.path, 'clearBadge restores original icon');
 
   // Test: clearBadgeForUrl clears badge and removes map entry
   console.log('\nclearBadgeForUrl:');
-  browser.action._badges = {};
+  browser.action._icons = {};
   bg.urlToTabId.set('https://badge-test.com', 55);
-  bg.setBadge(55, 'complete');
-  bg.clearBadgeForUrl('https://badge-test.com');
-  assertEqual(browser.action._badges[55].text, '', 'clearBadgeForUrl clears the badge');
+  await bg.setBadge(55, 'complete');
+  await bg.clearBadgeForUrl('https://badge-test.com');
+  assert(browser.action._icons[55]?.path, 'clearBadgeForUrl restores original icon');
   assert(!bg.urlToTabId.has('https://badge-test.com'), 'clearBadgeForUrl removes map entry');
 
   // Test: clearBadgeForUrl with unknown URL is a no-op
-  browser.action._badges = {};
-  bg.clearBadgeForUrl('https://unknown.com');
-  assertEqual(Object.keys(browser.action._badges).length, 0, 'clearBadgeForUrl no-op for unknown URL');
+  browser.action._icons = {};
+  await bg.clearBadgeForUrl('https://unknown.com');
+  assertEqual(Object.keys(browser.action._icons).length, 0, 'clearBadgeForUrl no-op for unknown URL');
+
+  // Test: clearBadgeForTab clears badge and removes all map entries for tab
+  console.log('\nclearBadgeForTab:');
+  browser.action._icons = {};
+  bg.urlToTabId.clear();
+  bg.urlToTabId.set('https://tab-url-a.com', 77);
+  bg.urlToTabId.set('https://tab-url-b.com', 77);
+  bg.urlToTabId.set('https://other-tab.com', 88);
+  await bg.setBadge(77, 'complete');
+  await bg.clearBadgeForTab(77);
+  assert(browser.action._icons[77]?.path, 'clearBadgeForTab restores original icon');
+  assert(!bg.urlToTabId.has('https://tab-url-a.com'), 'clearBadgeForTab removes URL A for tab');
+  assert(!bg.urlToTabId.has('https://tab-url-b.com'), 'clearBadgeForTab removes URL B for tab');
+  assert(bg.urlToTabId.has('https://other-tab.com'), 'clearBadgeForTab keeps URLs for other tabs');
 
   // Test: badge set to green on runClaude complete
   console.log('\nbadge on runClaude complete:');
   nativeDiskStore = {};
-  browser.action._badges = {};
+  browser.action._icons = {};
   bg.urlToTabId.clear();
   delete mockStorage.settings;
   await bg.saveSettings({ prefix: 'Summarize', allowedTools: '' });
@@ -764,13 +818,13 @@ async function runTests() {
     return { result: 'mock response' };
   };
   await bg.runClaude('https://badge-complete.com', 77);
-  assertEqual(browser.action._badges[77]?.text, ' ', 'runClaude complete sets badge text');
-  assertEqual(browser.action._badges[77]?.color, '#34C759', 'runClaude complete sets green badge');
+  assert(browser.action._icons[77]?.imageData, 'runClaude complete sets dot icon');
+  assert(browser.action._icons[77].imageData[16], 'runClaude complete icon has 16px');
 
   // Test: badge set to red on runClaude error
   console.log('\nbadge on runClaude error:');
   nativeDiskStore = {};
-  browser.action._badges = {};
+  browser.action._icons = {};
   bg.urlToTabId.clear();
   browser.runtime.sendNativeMessage = async (_id, payload) => {
     if (payload.action && ['storeResult', 'getStoredResult', 'clearStoredResult', 'clearAllResults'].includes(payload.action)) {
@@ -779,43 +833,56 @@ async function runTests() {
     throw new Error('CLI failed');
   };
   await bg.runClaude('https://badge-error.com', 88);
-  assertEqual(browser.action._badges[88]?.text, ' ', 'runClaude error sets badge text');
-  assertEqual(browser.action._badges[88]?.color, '#FF3B30', 'runClaude error sets red badge');
+  assert(browser.action._icons[88]?.imageData, 'runClaude error sets dot icon');
+  assert(browser.action._icons[88].imageData[16], 'runClaude error icon has 16px');
 
   // Test: badge cleared on cancelClaude
   console.log('\nbadge on cancelClaude:');
   nativeDiskStore = {};
-  browser.action._badges = {};
+  browser.action._icons = {};
   bg.urlToTabId.clear();
   browser.runtime.sendNativeMessage = originalSendNative;
   bg.urlToTabId.set('https://badge-cancel.com', 66);
-  bg.setBadge(66, 'complete');
+  await bg.setBadge(66, 'complete');
   await bg.cancelClaude('https://badge-cancel.com');
-  assertEqual(browser.action._badges[66].text, '', 'cancelClaude clears badge');
+  assert(browser.action._icons[66]?.path, 'cancelClaude restores original icon');
   assert(!bg.urlToTabId.has('https://badge-cancel.com'), 'cancelClaude removes map entry');
 
-  // Test: clearBadge message action
-  console.log('\nclearBadge message action:');
+  // Test: clearBadge message action (by URL)
+  console.log('\nclearBadge message action (by URL):');
   nativeDiskStore = {};
-  browser.action._badges = {};
+  browser.action._icons = {};
   bg.urlToTabId.clear();
   bg.urlToTabId.set('https://msg-badge.com', 44);
-  bg.setBadge(44, 'complete');
+  await bg.setBadge(44, 'complete');
   const clearBadgeHandler = browser.runtime._onMessageCallback;
   const clearBadgeResult = await clearBadgeHandler({ action: 'clearBadge', url: 'https://msg-badge.com' }, {});
-  assertEqual(clearBadgeResult.success, true, 'clearBadge message returns success');
-  assertEqual(browser.action._badges[44].text, '', 'clearBadge message clears badge');
-  assert(!bg.urlToTabId.has('https://msg-badge.com'), 'clearBadge message removes map entry');
+  assertEqual(clearBadgeResult.success, true, 'clearBadge by URL returns success');
+  assert(browser.action._icons[44]?.path, 'clearBadge by URL restores original icon');
+  assert(!bg.urlToTabId.has('https://msg-badge.com'), 'clearBadge by URL removes map entry');
+
+  // Test: clearBadge message action (by tabId)
+  console.log('\nclearBadge message action (by tabId):');
+  browser.action._icons = {};
+  bg.urlToTabId.clear();
+  bg.urlToTabId.set('https://tab-clear-a.com', 55);
+  bg.urlToTabId.set('https://tab-clear-b.com', 55);
+  await bg.setBadge(55, 'complete');
+  const clearTabResult = await clearBadgeHandler({ action: 'clearBadge', tabId: 55 }, {});
+  assertEqual(clearTabResult.success, true, 'clearBadge by tabId returns success');
+  assert(browser.action._icons[55]?.path, 'clearBadge by tabId restores original icon');
+  assert(!bg.urlToTabId.has('https://tab-clear-a.com'), 'clearBadge by tabId removes URL A');
+  assert(!bg.urlToTabId.has('https://tab-clear-b.com'), 'clearBadge by tabId removes URL B');
 
   // Test: tab navigation clears badge for old URL
   console.log('\ntab navigation badge cleanup:');
-  browser.action._badges = {};
+  browser.action._icons = {};
   bg.urlToTabId.clear();
   bg.urlToTabId.set('https://old-page.com', 33);
-  bg.setBadge(33, 'complete');
-  // Simulate tab navigating to a new URL
-  browser.tabs._onUpdatedCallback(33, { url: 'https://new-page.com' }, {});
-  assertEqual(browser.action._badges[33].text, '', 'tab navigation clears badge');
+  await bg.setBadge(33, 'complete');
+  // Simulate tab navigating to a new URL (listener is now async)
+  await browser.tabs._onUpdatedCallback(33, { url: 'https://new-page.com' }, {});
+  assert(browser.action._icons[33]?.path, 'tab navigation restores original icon');
   assert(!bg.urlToTabId.has('https://old-page.com'), 'tab navigation removes old URL from map');
 
   // Test: tab close cleans up map entry
@@ -825,15 +892,15 @@ async function runTests() {
   browser.tabs._onRemovedCallback(22);
   assert(!bg.urlToTabId.has('https://closed-tab.com'), 'tab close removes URL from map');
 
-  // Test: badge API failure doesn't break runClaude
-  console.log('\nbadge API failure resilience:');
+  // Test: setIcon API failure doesn't break runClaude
+  console.log('\nsetIcon API failure resilience:');
   nativeDiskStore = {};
   bg.urlToTabId.clear();
   delete mockStorage.settings;
   await bg.saveSettings({ prefix: 'Summarize', allowedTools: '' });
-  // Make badge API throw
-  const originalSetBadgeText = browser.action.setBadgeText;
-  browser.action.setBadgeText = () => { throw new Error('Badge API unavailable'); };
+  // Make setIcon throw
+  const originalSetIcon = browser.action.setIcon;
+  browser.action.setIcon = () => { throw new Error('setIcon API unavailable'); };
   browser.runtime.sendNativeMessage = async (_id, payload) => {
     if (payload.action && ['storeResult', 'getStoredResult', 'clearStoredResult', 'clearAllResults'].includes(payload.action)) {
       return originalSendNative(_id, payload);
@@ -843,18 +910,18 @@ async function runTests() {
   let badgeError = null;
   try {
     const badgeResult = await bg.runClaude('https://badge-fail.com', 11);
-    assertEqual(badgeResult.status, 'complete', 'runClaude completes despite badge API failure');
+    assertEqual(badgeResult.status, 'complete', 'runClaude completes despite setIcon failure');
   } catch (err) {
     badgeError = err;
   }
-  assertEqual(badgeError, null, 'badge API failure does not throw from runClaude');
-  browser.action.setBadgeText = originalSetBadgeText;
+  assertEqual(badgeError, null, 'setIcon failure does not throw from runClaude');
+  browser.action.setIcon = originalSetIcon;
   browser.runtime.sendNativeMessage = originalSendNative;
 
   // Test: runClaude without tabId does not crash badge logic
   console.log('\nrunClaude without tabId:');
   nativeDiskStore = {};
-  browser.action._badges = {};
+  browser.action._icons = {};
   bg.urlToTabId.clear();
   delete mockStorage.settings;
   await bg.saveSettings({ prefix: 'Summarize', allowedTools: '' });
@@ -872,7 +939,7 @@ async function runTests() {
     noTabError = err;
   }
   assertEqual(noTabError, null, 'runClaude without tabId does not throw');
-  assertEqual(Object.keys(browser.action._badges).length, 0, 'no badge set when tabId is undefined');
+  assertEqual(Object.keys(browser.action._icons).length, 0, 'no icon set when tabId is undefined');
   browser.runtime.sendNativeMessage = originalSendNative;
 
   // ── Summary ──────────────────────────────────────────────

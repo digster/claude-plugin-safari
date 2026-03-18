@@ -107,38 +107,94 @@ async function clearAllCache() {
 // Maps URL → tabId so we can set/clear badges when fetches complete
 const urlToTabId = new Map();
 
+// Cache generated dot-overlay ImageData (keyed by "size-color")
+const dotIconCache = {};
+
 /**
- * Set a colored badge dot on the toolbar icon for a specific tab.
+ * Create an icon ImageData with a small dot overlay in the top-right corner.
+ * Uses canvas compositing; result is cached for reuse.
+ */
+async function createDotIcon(size, color) {
+  const key = `${size}-${color}`;
+  if (dotIconCache[key]) return dotIconCache[key];
+
+  const img = new Image();
+  img.src = browser.runtime.getURL(`icons/icon-${size}.png`);
+  await new Promise((resolve, reject) => {
+    img.onload = resolve;
+    img.onerror = reject;
+  });
+
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+
+  // Small dot in top-right corner (~15% of icon size)
+  const dotRadius = Math.max(2, Math.round(size * 0.15));
+  const dotX = size - dotRadius - 1;
+  const dotY = dotRadius + 1;
+  ctx.beginPath();
+  ctx.arc(dotX, dotY, dotRadius, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+
+  const imageData = ctx.getImageData(0, 0, size, size);
+  dotIconCache[key] = imageData;
+  return imageData;
+}
+
+/**
+ * Set a colored dot overlay on the toolbar icon for a specific tab.
+ * Uses canvas compositing instead of the badge API for a smaller, subtler dot.
  * @param {number} tabId — the tab to badge
  * @param {'complete'|'error'|null} status — green dot, red dot, or clear
  */
-function setBadge(tabId, status) {
+async function setBadge(tabId, status) {
   try {
     if (status === null) {
-      browser.action.setBadgeText({ text: '', tabId });
+      // Restore original icon
+      browser.action.setIcon({
+        path: { 16: 'icons/icon-16.png', 32: 'icons/icon-32.png' },
+        tabId
+      });
     } else {
       const color = status === 'complete' ? '#34C759' : '#FF3B30';
-      browser.action.setBadgeText({ text: ' ', tabId });
-      browser.action.setBadgeBackgroundColor({ color, tabId });
+      const [icon16, icon32] = await Promise.all([
+        createDotIcon(16, color),
+        createDotIcon(32, color)
+      ]);
+      browser.action.setIcon({ imageData: { 16: icon16, 32: icon32 }, tabId });
     }
   } catch (err) {
     // Non-fatal — tab may have been closed
-    console.error('Badge API error:', err);
+    console.error('Icon dot error:', err);
   }
 }
 
-function clearBadge(tabId) {
-  setBadge(tabId, null);
+async function clearBadge(tabId) {
+  await setBadge(tabId, null);
 }
 
 /**
  * Clear badge for a URL and remove its mapping entry.
  */
-function clearBadgeForUrl(url) {
+async function clearBadgeForUrl(url) {
   const tabId = urlToTabId.get(url);
   if (tabId != null) {
-    clearBadge(tabId);
+    await clearBadge(tabId);
     urlToTabId.delete(url);
+  }
+}
+
+/**
+ * Clear badge for a tab and remove all URL→tab map entries for that tab.
+ */
+async function clearBadgeForTab(tabId) {
+  await clearBadge(tabId);
+  for (const [url, tid] of urlToTabId) {
+    if (tid === tabId) urlToTabId.delete(url);
   }
 }
 
@@ -194,7 +250,7 @@ async function runClaude(url, tabId) {
     // Check if request was cancelled while CLI was running
     const currentState = await getLastResult(url);
     if (currentState?.status === 'cancelled') {
-      clearBadgeForUrl(url);
+      await clearBadgeForUrl(url);
       return currentState;
     }
 
@@ -211,7 +267,7 @@ async function runClaude(url, tabId) {
     await saveLastResult(result);
 
     // Show green dot on toolbar icon so user knows result is ready
-    if (tabId != null) setBadge(tabId, 'complete');
+    if (tabId != null) await setBadge(tabId, 'complete');
 
     // Add to history
     await addToHistory({
@@ -228,7 +284,7 @@ async function runClaude(url, tabId) {
     // Check if request was cancelled (cancel saves state before killing process)
     const currentState = await getLastResult(url);
     if (currentState?.status === 'cancelled') {
-      clearBadgeForUrl(url);
+      await clearBadgeForUrl(url);
       return currentState;
     }
 
@@ -241,7 +297,7 @@ async function runClaude(url, tabId) {
     await saveLastResult(errorResult);
 
     // Show red dot on toolbar icon for errors
-    if (tabId != null) setBadge(tabId, 'error');
+    if (tabId != null) await setBadge(tabId, 'error');
 
     return errorResult;
   }
@@ -254,7 +310,7 @@ async function runClaude(url, tabId) {
  */
 async function cancelClaude(url) {
   // Clear badge immediately on cancel
-  clearBadgeForUrl(url);
+  await clearBadgeForUrl(url);
 
   // Save cancelled state before sending kill — handles the race where
   // CLI completes before the kill arrives
@@ -304,7 +360,11 @@ browser.runtime.onMessage.addListener((message, _sender) => {
           return await cancelClaude(message.url);
 
         case 'clearBadge':
-          clearBadgeForUrl(message.url);
+          if (message.tabId != null) {
+            await clearBadgeForTab(message.tabId);
+          } else if (message.url) {
+            await clearBadgeForUrl(message.url);
+          }
           return { success: true };
 
         case 'getSettings':
@@ -348,12 +408,12 @@ browser.runtime.onMessage.addListener((message, _sender) => {
 // ── Tab lifecycle cleanup ─────────────────────────────────────
 
 // Clear badge when a tab navigates away from the URL that triggered the fetch
-browser.tabs.onUpdated.addListener((tabId, changeInfo, _tab) => {
+browser.tabs.onUpdated.addListener(async (tabId, changeInfo, _tab) => {
   if (changeInfo.url) {
     // Find any URL mapped to this tab and clear its badge
     for (const [url, mappedTabId] of urlToTabId) {
       if (mappedTabId === tabId) {
-        clearBadge(tabId);
+        await clearBadge(tabId);
         urlToTabId.delete(url);
       }
     }
@@ -409,6 +469,7 @@ if (typeof module !== 'undefined' && module.exports) {
     setBadge,
     clearBadge,
     clearBadgeForUrl,
+    clearBadgeForTab,
     urlToTabId
   };
 }
