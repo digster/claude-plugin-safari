@@ -16,6 +16,7 @@ const stopBtn = document.getElementById('stop-btn');
 const cancelledArea = document.getElementById('cancelled-area');
 
 let currentUrl = '';
+let currentTabId = null;
 let elapsedTimer = null;
 
 // ── Initialization ──────────────────────────────────────────
@@ -32,9 +33,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const prefix = settings?.prefix || 'Summarize';
     prefixDisplay.textContent = prefix;
 
-    // Display current tab URL
+    // Display current tab URL and capture tabId for badge management
     if (tabs && tabs.length > 0 && tabs[0].url) {
       currentUrl = tabs[0].url;
+      currentTabId = tabs[0].id;
       urlDisplay.textContent = currentUrl;
 
       // Disable for non-http URLs (about:blank, settings, etc.)
@@ -55,8 +57,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         pollForResult();
       } else if (lastResult.status === 'complete') {
         showResult(lastResult);
+        // Clear badge — user has seen the result
+        sendMessage({ action: 'clearBadge', url: currentUrl });
       } else if (lastResult.status === 'error') {
         showError(lastResult.error);
+        sendMessage({ action: 'clearBadge', url: currentUrl });
       } else if (lastResult.status === 'cancelled') {
         showCancelled();
       }
@@ -78,7 +83,7 @@ askBtn.addEventListener('click', async () => {
   hideCancelled();
   showLoading();
 
-  const result = await sendMessage({ action: 'runClaude', url: currentUrl });
+  const result = await sendMessage({ action: 'runClaude', url: currentUrl, tabId: currentTabId });
 
   stopLoading();
 
@@ -87,9 +92,13 @@ askBtn.addEventListener('click', async () => {
     askBtn.disabled = false;
   } else if (result?.status === 'error') {
     showError(result.error);
+    // Clear badge — user sees the error in the popup
+    sendMessage({ action: 'clearBadge', url: currentUrl });
     askBtn.disabled = false;
   } else if (result?.status === 'complete') {
     showResult(result);
+    // Clear badge — user sees the result in the popup
+    sendMessage({ action: 'clearBadge', url: currentUrl });
     askBtn.disabled = false;
   } else {
     showError(result?.error || 'No response received. Check that the extension is enabled.');
@@ -226,8 +235,10 @@ async function pollForResult() {
       stopLoading();
       if (result.status === 'complete') {
         showResult(result);
+        sendMessage({ action: 'clearBadge', url: currentUrl });
       } else if (result.status === 'error') {
         showError(result.error);
+        sendMessage({ action: 'clearBadge', url: currentUrl });
       } else if (result.status === 'cancelled') {
         showCancelled();
       }

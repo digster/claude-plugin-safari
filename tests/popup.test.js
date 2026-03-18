@@ -141,13 +141,15 @@ function createMocks({ tabUrl, lastResult, settings } = {}) {
   // Track messages for verification
   const getLastResultMessages = [];
   const cancelMessages = [];
+  const clearBadgeMessages = [];
+  const runClaudeMessages = [];
 
   // Global browser mock — configurable per test
   global.browser = {
     tabs: {
       query: async () => {
-        if (tabUrl) return [{ url: tabUrl }];
-        return [{ url: 'https://example.com' }];
+        if (tabUrl) return [{ id: 123, url: tabUrl }];
+        return [{ id: 123, url: 'https://example.com' }];
       },
       create: async () => ({})
     },
@@ -162,6 +164,12 @@ function createMocks({ tabUrl, lastResult, settings } = {}) {
         } else if (msg.action === 'cancelClaude') {
           cancelMessages.push(msg);
           return Promise.resolve({ status: 'cancelled' });
+        } else if (msg.action === 'clearBadge') {
+          clearBadgeMessages.push(msg);
+          return Promise.resolve({ success: true });
+        } else if (msg.action === 'runClaude') {
+          runClaudeMessages.push(msg);
+          return Promise.resolve(null);
         } else {
           return Promise.resolve(null);
         }
@@ -179,6 +187,8 @@ function createMocks({ tabUrl, lastResult, settings } = {}) {
 
   mocks.getLastResultMessages = getLastResultMessages;
   mocks.cancelMessages = cancelMessages;
+  mocks.clearBadgeMessages = clearBadgeMessages;
+  mocks.runClaudeMessages = runClaudeMessages;
   global.chrome = global.browser;
 
   // Mock timers — capture callbacks for manual invocation
@@ -676,6 +686,142 @@ async function runTests() {
     assert(
       !mocks.elements['ask-btn'].disabled,
       'cancelled from click handler → ask button is re-enabled'
+    );
+  }
+
+  // ── Badge clearing from popup ──────────────────────────────
+
+  console.log('\nBadge clearing:');
+
+  // Test 15: Popup sends clearBadge on init when complete result found
+  {
+    const mocks = createMocks({
+      tabUrl: 'https://example.com/badge-clear',
+      lastResult: {
+        status: 'complete',
+        url: 'https://example.com/badge-clear',
+        response: { result: 'A summary' }
+      }
+    });
+    requireFreshPopup();
+    await mocks.domContentLoadedCb();
+
+    assert(
+      mocks.clearBadgeMessages.length > 0,
+      'popup sends clearBadge on init when complete result found'
+    );
+    assertEqual(
+      mocks.clearBadgeMessages[0].url,
+      'https://example.com/badge-clear',
+      'clearBadge message includes current URL'
+    );
+  }
+
+  // Test 16: Popup sends clearBadge on init when error result found
+  {
+    const mocks = createMocks({
+      tabUrl: 'https://example.com/badge-error',
+      lastResult: {
+        status: 'error',
+        url: 'https://example.com/badge-error',
+        error: 'CLI failed'
+      }
+    });
+    requireFreshPopup();
+    await mocks.domContentLoadedCb();
+
+    assert(
+      mocks.clearBadgeMessages.length > 0,
+      'popup sends clearBadge on init when error result found'
+    );
+  }
+
+  // Test 17: Popup does NOT send clearBadge when status is running
+  {
+    const mocks = createMocks({
+      tabUrl: 'https://example.com/running',
+      lastResult: {
+        status: 'running',
+        url: 'https://example.com/running',
+        startTime: 999000
+      }
+    });
+    requireFreshPopup();
+    await mocks.domContentLoadedCb();
+
+    assertEqual(
+      mocks.clearBadgeMessages.length,
+      0,
+      'popup does NOT send clearBadge when status is running'
+    );
+  }
+
+  // Test 18: Popup sends tabId in runClaude message
+  {
+    const mocks = createMocks({
+      tabUrl: 'https://example.com/with-tab',
+      lastResult: null
+    });
+    requireFreshPopup();
+    await mocks.domContentLoadedCb();
+
+    // Trigger the click handler
+    const clickHandlers = mocks.elements['ask-btn']._listeners['click'];
+    await clickHandlers[0]();
+
+    assert(
+      mocks.runClaudeMessages.length > 0,
+      'runClaude message was sent'
+    );
+    assertEqual(
+      mocks.runClaudeMessages[0].tabId,
+      123,
+      'runClaude message includes tabId from active tab'
+    );
+    assertEqual(
+      mocks.runClaudeMessages[0].url,
+      'https://example.com/with-tab',
+      'runClaude message includes current URL'
+    );
+  }
+
+  // Test 19: Poll sends clearBadge when result completes
+  {
+    const mocks = createMocks({
+      tabUrl: 'https://example.com/poll-badge',
+      lastResult: {
+        status: 'running',
+        url: 'https://example.com/poll-badge',
+        startTime: 999000
+      }
+    });
+
+    requireFreshPopup();
+    await mocks.domContentLoadedCb();
+
+    // Override sendMessage so poll gets a complete result
+    global.browser.runtime.sendMessage = (msg) => {
+      if (msg.action === 'getLastResult') {
+        return Promise.resolve({
+          status: 'complete',
+          url: 'https://example.com/poll-badge',
+          response: { result: 'Done' }
+        });
+      } else if (msg.action === 'clearBadge') {
+        mocks.clearBadgeMessages.push(msg);
+        return Promise.resolve({ success: true });
+      }
+      return Promise.resolve(null);
+    };
+
+    // Execute poll timeout(s)
+    for (const t of mocks.timeouts) {
+      if (t.fn) await t.fn();
+    }
+
+    assert(
+      mocks.clearBadgeMessages.length > 0,
+      'poll sends clearBadge when result completes'
     );
   }
 

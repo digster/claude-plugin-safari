@@ -135,3 +135,15 @@ Changes:
 6. **popup.js**: Wire stop button click handler, handle `cancelled` status in init/polling/click paths, add show/hideCancelled helpers
 7. **tests/background.test.js**: 11 new tests (cancel state, native message, resilience, race conditions, message handler)
 8. **tests/popup.test.js**: 4 new tests (stop button, cancelled init, cancelled polling, cancelled click handler)
+
+## 2026-03-18 — Green Dot Badge Notification on Toolbar Icon
+
+Fetches can take 30+ seconds. When the user switches tabs or closes the popup, there's no visual indicator that the fetch completed. Add a green dot badge on the extension toolbar icon so the user can glance at it and know a result is ready without opening the popup.
+
+Use `browser.action.setBadgeText()` / `browser.action.setBadgeBackgroundColor()` (available in Safari MV3, no extra permissions needed) with per-tab `tabId` to show a colored dot when a fetch finishes. Clear it when the popup is opened and the result is displayed.
+
+Changes:
+1. **background.js**: Add `urlToTabId` Map, `setBadge`/`clearBadge`/`clearBadgeForUrl` helpers, modify `runClaude(url, tabId)` and `cancelClaude(url)` for badge integration, add `clearBadge` message action, add `tabs.onUpdated`/`onRemoved` listeners for cleanup
+2. **popup.js**: Capture `currentTabId` from active tab, send with `runClaude`, send `clearBadge` messages when displaying complete/error results (init, click, poll)
+3. **tests/background.test.js**: Add `browser.action` mock, tab event listener mocks, 14 new badge test cases
+4. **tests/popup.test.js**: Add `clearBadgeMessages`/`runClaudeMessages` tracking, add `id` to mock tabs, 5 new badge test cases

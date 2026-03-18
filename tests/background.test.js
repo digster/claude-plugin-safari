@@ -113,7 +113,26 @@ const browser = {
     _onMessageCallback: null
   },
   tabs: {
-    query: async () => [{ url: 'https://example.com' }]
+    query: async () => [{ url: 'https://example.com' }],
+    onUpdated: {
+      addListener: (cb) => { browser.tabs._onUpdatedCallback = cb; },
+    },
+    onRemoved: {
+      addListener: (cb) => { browser.tabs._onRemovedCallback = cb; },
+    },
+    _onUpdatedCallback: null,
+    _onRemovedCallback: null
+  },
+  action: {
+    _badges: {},
+    setBadgeText: ({ text, tabId }) => {
+      if (!browser.action._badges[tabId]) browser.action._badges[tabId] = {};
+      browser.action._badges[tabId].text = text;
+    },
+    setBadgeBackgroundColor: ({ color, tabId }) => {
+      if (!browser.action._badges[tabId]) browser.action._badges[tabId] = {};
+      browser.action._badges[tabId].color = color;
+    }
   }
 };
 
@@ -690,6 +709,171 @@ async function runTests() {
   assertEqual(handlerCancelResult.status, 'cancelled', 'message handler returns cancelled for cancelClaude');
   const handlerCancelState = await bg.getLastResult('https://handler-cancel.com');
   assertEqual(handlerCancelState.status, 'cancelled', 'message handler saves cancelled state via cancelClaude');
+
+  // ── Badge notification tests ────────────────────────────
+
+  // Test: setBadge sets green dot for 'complete'
+  console.log('\nsetBadge:');
+  browser.action._badges = {};
+  bg.setBadge(42, 'complete');
+  assertEqual(browser.action._badges[42].text, ' ', 'setBadge complete sets text to space');
+  assertEqual(browser.action._badges[42].color, '#34C759', 'setBadge complete sets green color');
+
+  // Test: setBadge sets red dot for 'error'
+  browser.action._badges = {};
+  bg.setBadge(42, 'error');
+  assertEqual(browser.action._badges[42].text, ' ', 'setBadge error sets text to space');
+  assertEqual(browser.action._badges[42].color, '#FF3B30', 'setBadge error sets red color');
+
+  // Test: setBadge(null) clears badge
+  bg.setBadge(42, null);
+  assertEqual(browser.action._badges[42].text, '', 'setBadge null clears text');
+
+  // Test: clearBadge shorthand
+  console.log('\nclearBadge:');
+  browser.action._badges = {};
+  bg.setBadge(99, 'complete');
+  bg.clearBadge(99);
+  assertEqual(browser.action._badges[99].text, '', 'clearBadge clears the badge');
+
+  // Test: clearBadgeForUrl clears badge and removes map entry
+  console.log('\nclearBadgeForUrl:');
+  browser.action._badges = {};
+  bg.urlToTabId.set('https://badge-test.com', 55);
+  bg.setBadge(55, 'complete');
+  bg.clearBadgeForUrl('https://badge-test.com');
+  assertEqual(browser.action._badges[55].text, '', 'clearBadgeForUrl clears the badge');
+  assert(!bg.urlToTabId.has('https://badge-test.com'), 'clearBadgeForUrl removes map entry');
+
+  // Test: clearBadgeForUrl with unknown URL is a no-op
+  browser.action._badges = {};
+  bg.clearBadgeForUrl('https://unknown.com');
+  assertEqual(Object.keys(browser.action._badges).length, 0, 'clearBadgeForUrl no-op for unknown URL');
+
+  // Test: badge set to green on runClaude complete
+  console.log('\nbadge on runClaude complete:');
+  nativeDiskStore = {};
+  browser.action._badges = {};
+  bg.urlToTabId.clear();
+  delete mockStorage.settings;
+  await bg.saveSettings({ prefix: 'Summarize', allowedTools: '' });
+  browser.runtime.sendNativeMessage = async (_id, payload) => {
+    if (payload.action && ['storeResult', 'getStoredResult', 'clearStoredResult', 'clearAllResults'].includes(payload.action)) {
+      return originalSendNative(_id, payload);
+    }
+    return { result: 'mock response' };
+  };
+  await bg.runClaude('https://badge-complete.com', 77);
+  assertEqual(browser.action._badges[77]?.text, ' ', 'runClaude complete sets badge text');
+  assertEqual(browser.action._badges[77]?.color, '#34C759', 'runClaude complete sets green badge');
+
+  // Test: badge set to red on runClaude error
+  console.log('\nbadge on runClaude error:');
+  nativeDiskStore = {};
+  browser.action._badges = {};
+  bg.urlToTabId.clear();
+  browser.runtime.sendNativeMessage = async (_id, payload) => {
+    if (payload.action && ['storeResult', 'getStoredResult', 'clearStoredResult', 'clearAllResults'].includes(payload.action)) {
+      return originalSendNative(_id, payload);
+    }
+    throw new Error('CLI failed');
+  };
+  await bg.runClaude('https://badge-error.com', 88);
+  assertEqual(browser.action._badges[88]?.text, ' ', 'runClaude error sets badge text');
+  assertEqual(browser.action._badges[88]?.color, '#FF3B30', 'runClaude error sets red badge');
+
+  // Test: badge cleared on cancelClaude
+  console.log('\nbadge on cancelClaude:');
+  nativeDiskStore = {};
+  browser.action._badges = {};
+  bg.urlToTabId.clear();
+  browser.runtime.sendNativeMessage = originalSendNative;
+  bg.urlToTabId.set('https://badge-cancel.com', 66);
+  bg.setBadge(66, 'complete');
+  await bg.cancelClaude('https://badge-cancel.com');
+  assertEqual(browser.action._badges[66].text, '', 'cancelClaude clears badge');
+  assert(!bg.urlToTabId.has('https://badge-cancel.com'), 'cancelClaude removes map entry');
+
+  // Test: clearBadge message action
+  console.log('\nclearBadge message action:');
+  nativeDiskStore = {};
+  browser.action._badges = {};
+  bg.urlToTabId.clear();
+  bg.urlToTabId.set('https://msg-badge.com', 44);
+  bg.setBadge(44, 'complete');
+  const clearBadgeHandler = browser.runtime._onMessageCallback;
+  const clearBadgeResult = await clearBadgeHandler({ action: 'clearBadge', url: 'https://msg-badge.com' }, {});
+  assertEqual(clearBadgeResult.success, true, 'clearBadge message returns success');
+  assertEqual(browser.action._badges[44].text, '', 'clearBadge message clears badge');
+  assert(!bg.urlToTabId.has('https://msg-badge.com'), 'clearBadge message removes map entry');
+
+  // Test: tab navigation clears badge for old URL
+  console.log('\ntab navigation badge cleanup:');
+  browser.action._badges = {};
+  bg.urlToTabId.clear();
+  bg.urlToTabId.set('https://old-page.com', 33);
+  bg.setBadge(33, 'complete');
+  // Simulate tab navigating to a new URL
+  browser.tabs._onUpdatedCallback(33, { url: 'https://new-page.com' }, {});
+  assertEqual(browser.action._badges[33].text, '', 'tab navigation clears badge');
+  assert(!bg.urlToTabId.has('https://old-page.com'), 'tab navigation removes old URL from map');
+
+  // Test: tab close cleans up map entry
+  console.log('\ntab close cleanup:');
+  bg.urlToTabId.clear();
+  bg.urlToTabId.set('https://closed-tab.com', 22);
+  browser.tabs._onRemovedCallback(22);
+  assert(!bg.urlToTabId.has('https://closed-tab.com'), 'tab close removes URL from map');
+
+  // Test: badge API failure doesn't break runClaude
+  console.log('\nbadge API failure resilience:');
+  nativeDiskStore = {};
+  bg.urlToTabId.clear();
+  delete mockStorage.settings;
+  await bg.saveSettings({ prefix: 'Summarize', allowedTools: '' });
+  // Make badge API throw
+  const originalSetBadgeText = browser.action.setBadgeText;
+  browser.action.setBadgeText = () => { throw new Error('Badge API unavailable'); };
+  browser.runtime.sendNativeMessage = async (_id, payload) => {
+    if (payload.action && ['storeResult', 'getStoredResult', 'clearStoredResult', 'clearAllResults'].includes(payload.action)) {
+      return originalSendNative(_id, payload);
+    }
+    return { result: 'mock response' };
+  };
+  let badgeError = null;
+  try {
+    const badgeResult = await bg.runClaude('https://badge-fail.com', 11);
+    assertEqual(badgeResult.status, 'complete', 'runClaude completes despite badge API failure');
+  } catch (err) {
+    badgeError = err;
+  }
+  assertEqual(badgeError, null, 'badge API failure does not throw from runClaude');
+  browser.action.setBadgeText = originalSetBadgeText;
+  browser.runtime.sendNativeMessage = originalSendNative;
+
+  // Test: runClaude without tabId does not crash badge logic
+  console.log('\nrunClaude without tabId:');
+  nativeDiskStore = {};
+  browser.action._badges = {};
+  bg.urlToTabId.clear();
+  delete mockStorage.settings;
+  await bg.saveSettings({ prefix: 'Summarize', allowedTools: '' });
+  browser.runtime.sendNativeMessage = async (_id, payload) => {
+    if (payload.action && ['storeResult', 'getStoredResult', 'clearStoredResult', 'clearAllResults'].includes(payload.action)) {
+      return originalSendNative(_id, payload);
+    }
+    return { result: 'mock response' };
+  };
+  let noTabError = null;
+  try {
+    const noTabResult = await bg.runClaude('https://no-tab.com');
+    assertEqual(noTabResult.status, 'complete', 'runClaude completes without tabId');
+  } catch (err) {
+    noTabError = err;
+  }
+  assertEqual(noTabError, null, 'runClaude without tabId does not throw');
+  assertEqual(Object.keys(browser.action._badges).length, 0, 'no badge set when tabId is undefined');
+  browser.runtime.sendNativeMessage = originalSendNative;
 
   // ── Summary ──────────────────────────────────────────────
 

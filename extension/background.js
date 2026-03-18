@@ -102,6 +102,46 @@ async function clearAllCache() {
   return { success: true, clearedCount };
 }
 
+// ── Badge notification (toolbar icon dot) ───────────────────
+
+// Maps URL → tabId so we can set/clear badges when fetches complete
+const urlToTabId = new Map();
+
+/**
+ * Set a colored badge dot on the toolbar icon for a specific tab.
+ * @param {number} tabId — the tab to badge
+ * @param {'complete'|'error'|null} status — green dot, red dot, or clear
+ */
+function setBadge(tabId, status) {
+  try {
+    if (status === null) {
+      browser.action.setBadgeText({ text: '', tabId });
+    } else {
+      const color = status === 'complete' ? '#34C759' : '#FF3B30';
+      browser.action.setBadgeText({ text: ' ', tabId });
+      browser.action.setBadgeBackgroundColor({ color, tabId });
+    }
+  } catch (err) {
+    // Non-fatal — tab may have been closed
+    console.error('Badge API error:', err);
+  }
+}
+
+function clearBadge(tabId) {
+  setBadge(tabId, null);
+}
+
+/**
+ * Clear badge for a URL and remove its mapping entry.
+ */
+function clearBadgeForUrl(url) {
+  const tabId = urlToTabId.get(url);
+  if (tabId != null) {
+    clearBadge(tabId);
+    urlToTabId.delete(url);
+  }
+}
+
 // ── Native messaging bridge ─────────────────────────────────
 
 /**
@@ -121,7 +161,9 @@ async function sendNativeMessage(payload) {
  * Checks for cancellation after CLI completes to handle the race condition
  * where cancel arrives while the CLI is still running.
  */
-async function runClaude(url) {
+async function runClaude(url, tabId) {
+  // Track which tab initiated this fetch for badge notifications
+  if (tabId != null) urlToTabId.set(url, tabId);
   const settings = await getSettings();
   const prompt = settings.prefix ? `${settings.prefix} ${url}` : url;
 
@@ -152,6 +194,7 @@ async function runClaude(url) {
     // Check if request was cancelled while CLI was running
     const currentState = await getLastResult(url);
     if (currentState?.status === 'cancelled') {
+      clearBadgeForUrl(url);
       return currentState;
     }
 
@@ -166,6 +209,9 @@ async function runClaude(url) {
     };
 
     await saveLastResult(result);
+
+    // Show green dot on toolbar icon so user knows result is ready
+    if (tabId != null) setBadge(tabId, 'complete');
 
     // Add to history
     await addToHistory({
@@ -182,6 +228,7 @@ async function runClaude(url) {
     // Check if request was cancelled (cancel saves state before killing process)
     const currentState = await getLastResult(url);
     if (currentState?.status === 'cancelled') {
+      clearBadgeForUrl(url);
       return currentState;
     }
 
@@ -192,6 +239,10 @@ async function runClaude(url) {
       error: err.message || String(err)
     };
     await saveLastResult(errorResult);
+
+    // Show red dot on toolbar icon for errors
+    if (tabId != null) setBadge(tabId, 'error');
+
     return errorResult;
   }
 }
@@ -202,6 +253,9 @@ async function runClaude(url) {
  * then sends the native kill message (best-effort).
  */
 async function cancelClaude(url) {
+  // Clear badge immediately on cancel
+  clearBadgeForUrl(url);
+
   // Save cancelled state before sending kill — handles the race where
   // CLI completes before the kill arrives
   await saveLastResult({
@@ -244,10 +298,14 @@ browser.runtime.onMessage.addListener((message, _sender) => {
     try {
       switch (message.action) {
         case 'runClaude':
-          return await runClaude(message.url);
+          return await runClaude(message.url, message.tabId);
 
         case 'cancelClaude':
           return await cancelClaude(message.url);
+
+        case 'clearBadge':
+          clearBadgeForUrl(message.url);
+          return { success: true };
 
         case 'getSettings':
           return await getSettings();
@@ -287,6 +345,30 @@ browser.runtime.onMessage.addListener((message, _sender) => {
   })();
 });
 
+// ── Tab lifecycle cleanup ─────────────────────────────────────
+
+// Clear badge when a tab navigates away from the URL that triggered the fetch
+browser.tabs.onUpdated.addListener((tabId, changeInfo, _tab) => {
+  if (changeInfo.url) {
+    // Find any URL mapped to this tab and clear its badge
+    for (const [url, mappedTabId] of urlToTabId) {
+      if (mappedTabId === tabId) {
+        clearBadge(tabId);
+        urlToTabId.delete(url);
+      }
+    }
+  }
+});
+
+// Clean up map entries when a tab is closed
+browser.tabs.onRemoved.addListener((tabId) => {
+  for (const [url, mappedTabId] of urlToTabId) {
+    if (mappedTabId === tabId) {
+      urlToTabId.delete(url);
+    }
+  }
+});
+
 // ── Initialization ───────────────────────────────────────────
 
 browser.runtime.onInstalled.addListener(async () => {
@@ -323,6 +405,10 @@ if (typeof module !== 'undefined' && module.exports) {
     runClaude,
     cancelClaude,
     verifyCli,
-    sendNativeMessage
+    sendNativeMessage,
+    setBadge,
+    clearBadge,
+    clearBadgeForUrl,
+    urlToTabId
   };
 }
