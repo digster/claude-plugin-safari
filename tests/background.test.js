@@ -593,6 +593,104 @@ async function runTests() {
   const latestResult = await bg.getLastResult();
   assertEqual(latestResult.url, 'https://site-a.com', 'lastResult still accessible without URL param');
 
+  // ── Cancel tests ──────────────────────────────────────────
+
+  // Test: cancelClaude saves cancelled state to disk
+  console.log('\ncancelClaude saves cancelled state:');
+  nativeDiskStore = {};
+  browser.runtime.sendNativeMessage = originalSendNative;
+  const cancelResult = await bg.cancelClaude('https://cancel-test.com');
+  assertEqual(cancelResult.status, 'cancelled', 'cancelClaude returns cancelled status');
+  const cancelledState = await bg.getLastResult('https://cancel-test.com');
+  assertEqual(cancelledState.status, 'cancelled', 'cancelled state is saved to per-URL cache');
+  assertEqual(cancelledState.url, 'https://cancel-test.com', 'cancelled state has correct URL');
+  assert(cancelledState.cancelledAt > 0, 'cancelled state has cancelledAt timestamp');
+
+  // Test: cancelClaude sends cancelClaude action to native handler
+  console.log('\ncancelClaude native message:');
+  let cancelNativePayload = null;
+  browser.runtime.sendNativeMessage = async (_id, payload) => {
+    if (payload.action === 'cancelClaude') {
+      cancelNativePayload = payload;
+      return { success: true };
+    }
+    return originalSendNative(_id, payload);
+  };
+  await bg.cancelClaude('https://cancel-test.com');
+  assertEqual(cancelNativePayload.action, 'cancelClaude', 'sends cancelClaude action to native handler');
+  browser.runtime.sendNativeMessage = originalSendNative;
+
+  // Test: cancelClaude handles native message failure gracefully
+  console.log('\ncancelClaude native failure resilience:');
+  browser.runtime.sendNativeMessage = async (_id, payload) => {
+    if (payload.action === 'cancelClaude') {
+      throw new Error('Native messaging unavailable');
+    }
+    return originalSendNative(_id, payload);
+  };
+  let cancelError = null;
+  try {
+    const failedCancel = await bg.cancelClaude('https://cancel-test.com');
+    assertEqual(failedCancel.status, 'cancelled', 'cancelClaude returns cancelled even on native failure');
+  } catch (err) {
+    cancelError = err;
+  }
+  assertEqual(cancelError, null, 'cancelClaude does not throw on native message failure');
+  browser.runtime.sendNativeMessage = originalSendNative;
+
+  // Test: runClaude respects cancelled state (race condition — cancel arrives during CLI run)
+  console.log('\nrunClaude respects cancelled state (race condition):');
+  nativeDiskStore = {};
+  delete mockStorage.settings;
+  await bg.saveSettings({ prefix: 'Summarize', allowedTools: '' });
+
+  // Mock sendNativeMessage: when runClaude action is sent, simulate cancel arriving
+  // during the CLI execution by saving cancelled state before returning
+  browser.runtime.sendNativeMessage = async (_id, payload) => {
+    if (payload.action === 'runClaude') {
+      // Simulate: cancel was triggered while CLI was running — save cancelled state
+      await originalSendNative(_id, {
+        action: 'storeResult',
+        result: { status: 'cancelled', url: 'https://race-test.com', cancelledAt: Date.now() }
+      });
+      return { result: 'This should be discarded' };
+    }
+    return originalSendNative(_id, payload);
+  };
+  const raceResult = await bg.runClaude('https://race-test.com');
+  assertEqual(raceResult.status, 'cancelled', 'runClaude returns cancelled when cancel arrives during execution');
+  browser.runtime.sendNativeMessage = originalSendNative;
+
+  // Test: runClaude respects cancelled state in error path
+  console.log('\nrunClaude respects cancelled state on error:');
+  nativeDiskStore = {};
+  delete mockStorage.settings;
+  await bg.saveSettings({ prefix: 'Summarize', allowedTools: '' });
+
+  browser.runtime.sendNativeMessage = async (_id, payload) => {
+    if (payload.action === 'runClaude') {
+      // Simulate: cancel was triggered, then CLI errors out
+      await originalSendNative(_id, {
+        action: 'storeResult',
+        result: { status: 'cancelled', url: 'https://error-race.com', cancelledAt: Date.now() }
+      });
+      throw new Error('Process terminated');
+    }
+    return originalSendNative(_id, payload);
+  };
+  const errorRaceResult = await bg.runClaude('https://error-race.com');
+  assertEqual(errorRaceResult.status, 'cancelled', 'runClaude returns cancelled when cancel arrives before error');
+  browser.runtime.sendNativeMessage = originalSendNative;
+
+  // Test: cancelClaude message handler integration
+  console.log('\ncancelClaude message handler:');
+  nativeDiskStore = {};
+  const cancelHandler = browser.runtime._onMessageCallback;
+  const handlerCancelResult = await cancelHandler({ action: 'cancelClaude', url: 'https://handler-cancel.com' }, {});
+  assertEqual(handlerCancelResult.status, 'cancelled', 'message handler returns cancelled for cancelClaude');
+  const handlerCancelState = await bg.getLastResult('https://handler-cancel.com');
+  assertEqual(handlerCancelState.status, 'cancelled', 'message handler saves cancelled state via cancelClaude');
+
   // ── Summary ──────────────────────────────────────────────
 
   console.log(`\n${'─'.repeat(40)}`);

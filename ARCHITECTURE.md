@@ -30,8 +30,8 @@ A Safari Web Extension that bridges the browser to a local Claude CLI binary. Th
 
 | File | Purpose |
 |------|---------|
-| `extension/background.js` | Central message router. Handles all actions (`runClaude`, `getSettings`, `saveSettings`, `verifyCli`, etc.). Bridges to native handler via `browser.runtime.sendNativeMessage()`. Stores results for recovery. |
-| `extension/popup/popup.js` | Toolbar popup UI. Shows prefix + URL preview, "Ask Claude" button, loading state with elapsed timer, result display with copy/pop-out. |
+| `extension/background.js` | Central message router. Handles all actions (`runClaude`, `cancelClaude`, `getSettings`, `saveSettings`, `verifyCli`, etc.). Bridges to native handler via `browser.runtime.sendNativeMessage()`. Stores results for recovery. `cancelClaude` saves cancelled state to disk before sending the native kill signal (handles race conditions). |
+| `extension/popup/popup.js` | Toolbar popup UI. Shows prefix + URL preview, "Ask Claude" button, loading state with elapsed timer + Stop button, result display with copy/pop-out. Handles `cancelled` status in all restore paths (init, polling, click). |
 | `extension/settings/settings.js` | Configuration page. Prefix textarea, CLI path input with verify button, allowed tools, effort level, model selection, and "Clear All Cache" button (nukes all disk cache + history). |
 | `extension/result/result.js` | Full-page pop-out for long responses. Loads last result from storage, renders with markdown. |
 
@@ -39,9 +39,9 @@ A Safari Web Extension that bridges the browser to a local Claude CLI binary. Th
 
 | File | Purpose |
 |------|---------|
-| `SafariWebExtensionHandler.swift` | Receives `sendNativeMessage` calls from JS. Actions: `runClaude` (uses `NSUserUnixTask` to execute a helper script that invokes the CLI), `verifyCli` (checks if the helper script is installed), `storeResult`/`getStoredResult`/`clearStoredResult`/`clearAllResults` (disk-based result storage to bypass browser.storage.local quota). `getStoredResult` with a URL returns null on cache miss (no fallback to lastResult). Runs sandboxed. |
+| `SafariWebExtensionHandler.swift` | Receives `sendNativeMessage` calls from JS. Actions: `runClaude` (uses `NSUserUnixTask` to execute a helper script that invokes the CLI), `cancelClaude` (runs helper script with `--cancel` to kill the running process), `verifyCli` (checks if the helper script is installed), `storeResult`/`getStoredResult`/`clearStoredResult`/`clearAllResults` (disk-based result storage to bypass browser.storage.local quota). `getStoredResult` with a URL returns null on cache miss (no fallback to lastResult). Runs sandboxed. |
 | `ViewController.swift` | App container UI — shows extension enable status, links to Safari preferences. Handles helper script installation via `NSSavePanel` to `~/Library/Application Scripts/<extension-bundle-id>/`. |
-| `run-claude.sh` (installed) | Helper script (v2) placed in Application Scripts dir. Runs **outside** the sandbox via `NSUserUnixTask`. Sets up `PATH`/`HOME` env, uses `shift 3` + `"$@"` to forward extra CLI flags (e.g., `--allowedTools`), and `exec`s the Claude CLI binary. |
+| `run-claude.sh` (installed) | Helper script (v3) placed in Application Scripts dir. Runs **outside** the sandbox via `NSUserUnixTask`. Normal mode: sets up `PATH`/`HOME` env, uses `shift 3` + `"$@"` to forward extra CLI flags, runs Claude as a background child process, writes PID to `/tmp/claude-assistant.pid`, and `wait`s. Cancel mode (`--cancel`): reads PID file and sends SIGTERM. Trap cleans up PID file on exit. |
 | `AppDelegate.swift` | Standard app delegate, terminates after last window closes. |
 
 ### Data Flow
@@ -108,7 +108,8 @@ Each file contains:
 | `--output-format json` from CLI | Structured response includes cost, token counts, duration for richer UI metadata |
 | `--allowedTools` pre-authorization | CLI runs headlessly (no TTY) so interactive permission prompts can't be answered. Tools like `WebFetch` are pre-authorized via `--allowedTools` to avoid blocking |
 | `--effort` and `--model` flags | Optional CLI flags forwarded only when non-empty. Lets users control response quality/cost and model selection without editing the CLI directly |
-| Helper script version detection | Containing app reads the installed script and checks for `"shift 3"` to determine if it's v2 (supports extra args). Outdated scripts trigger a reinstall notice. The check now triggers for any extra CLI flags (allowedTools, effort, or model) |
+| Helper script version detection | Containing app reads the installed script and checks for `"shift 3"` (v2+) and `"PID_FILE"` (v3 cancel support). Outdated scripts trigger a reinstall notice. The check triggers for any extra CLI flags (allowedTools, effort, or model) |
+| PID-based request cancellation | v3 helper script runs Claude as a background child (`&`), writes PID to `/tmp/claude-assistant.pid`, and `wait`s. Cancel mode reads PID file and sends SIGTERM. JS saves `cancelled` status to disk *before* sending the kill signal — this handles the race where CLI completes before the kill arrives. The popup Stop button and all result-restore paths (init, polling, click handler) check for `cancelled` status |
 | `lastResult` on native disk (not browser.storage.local) | Safari MV3 has a ~5MB `browser.storage.local` quota. Claude responses (10-100KB+) caused `Exceeded storage quota` errors. Result data now goes through `sendNativeMessage` → Swift handler → JSON file on disk. The extension's sandboxed Application Support directory is accessible without entitlements |
 | Per-URL result cache (`results/` dir) | A singleton `lastResult.json` was overwritten on each new query — revisiting a previous URL found no cache. Now results are also stored in `results/<SHA256-hash>.json` keyed by URL. The popup passes the tab URL when fetching, hitting the per-URL cache. LRU eviction at 25 files (~2.5MB worst case) bounds disk usage. `lastResult.json` remains as a "most recent" pointer for the pop-out view |
 | History capped at 25 entries, 100-char previews | Safeguard to keep `browser.storage.local` well within quota; history stays in browser storage since it's small |

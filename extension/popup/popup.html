@@ -32,10 +32,21 @@
 
     <!-- Loading state -->
     <div id="loading" class="loading hidden">
-      <div class="spinner"></div>
-      <span class="loading-text">Thinking...</span>
-      <span class="elapsed" id="elapsed">0s</span>
+      <div class="loading-info">
+        <div class="spinner"></div>
+        <span class="loading-text">Thinking...</span>
+        <span class="elapsed" id="elapsed">0s</span>
+      </div>
+      <button id="stop-btn" class="stop-btn">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+          <rect x="1" y="1" width="10" height="10" rx="1.5"/>
+        </svg>
+        Stop
+      </button>
     </div>
+
+    <!-- Cancelled state -->
+    <div id="cancelled-area" class="message cancelled hidden">Request cancelled</div>
 
     <!-- Result area -->
     <div id="result-area" class="result-area hidden">

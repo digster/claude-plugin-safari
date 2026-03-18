@@ -119,3 +119,19 @@ Changes:
 3. **settings.html/css/js**: Add "Clear All Cache" danger button with click handler
 4. **tests/background.test.js**: Update mocks for no-fallback behavior, fix existing test, add 15 new tests
 5. **ARCHITECTURE.md**: Document `clearAllResults` action and settings button
+
+## 2026-03-17 (session 12) — Add Stop Button to Cancel Running Requests
+
+The Claude CLI can take many minutes (6+ min). Currently there's no way to cancel a running request — the user is stuck watching "Thinking... 6m 19s". Add a Stop button that kills the running CLI process and updates the UI immediately.
+
+Approach: PID-based tracking in the helper script (v3). Instead of `exec` (which replaces the shell), run claude as a background child (`&`), write PID to `/tmp/claude-assistant.pid`, and `wait`. A `--cancel` flag reads the PID and kills the process.
+
+Changes:
+1. **ViewController.swift**: Update `helperScriptContent` to v3 with PID tracking + cancel mode, add `cancelSupportMarker` constant
+2. **SafariWebExtensionHandler.swift**: Add `cancelClaude` action that runs helper script with `--cancel` arg (best-effort)
+3. **background.js**: Add `cancelClaude(url)` (saves cancelled state first, then sends native kill), modify `runClaude()` to check for cancelled state after CLI completes (race condition handling), add message handler case
+4. **popup.html**: Add stop button with stop-square SVG + cancelled status message area
+5. **popup.css**: Stop button styles (red/danger), cancelled message styles (amber), loading layout restructured
+6. **popup.js**: Wire stop button click handler, handle `cancelled` status in init/polling/click paths, add show/hideCancelled helpers
+7. **tests/background.test.js**: 11 new tests (cancel state, native message, resilience, race conditions, message handler)
+8. **tests/popup.test.js**: 4 new tests (stop button, cancelled init, cancelled polling, cancelled click handler)

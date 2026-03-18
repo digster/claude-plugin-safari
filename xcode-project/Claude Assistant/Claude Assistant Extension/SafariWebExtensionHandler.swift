@@ -5,6 +5,7 @@
 //  Handles native messages from the browser extension JS layer.
 //  Supports actions:
 //    - runClaude: executes the Claude CLI via NSUserUnixTask (sandbox-safe) and returns the output
+//    - cancelClaude: kills the running CLI process via the helper script's --cancel mode
 //    - verifyCli: checks if the helper script is installed in Application Scripts
 //    - storeResult: writes a result dictionary to disk (bypasses browser.storage.local quota)
 //    - getStoredResult: reads the stored result from disk
@@ -37,6 +38,8 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         switch action {
         case "runClaude":
             handleRunClaude(context: context, message: msg)
+        case "cancelClaude":
+            handleCancelClaude(context: context)
         case "verifyCli":
             handleVerifyCli(context: context, message: msg)
         case "storeResult":
@@ -166,6 +169,44 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
             sendResponse(context: context, data: [
                 "error": "Failed to initialize helper script: \(error.localizedDescription)"
             ])
+        }
+    }
+
+    // MARK: - Cancel Running Claude Request
+
+    /// Kill the running Claude CLI process by invoking the helper script with --cancel.
+    /// The v3 helper script reads the PID from /tmp/claude-assistant.pid and sends SIGTERM.
+    /// Always returns success — cancel is best-effort (process may have already completed).
+    private func handleCancelClaude(context: NSExtensionContext) {
+        guard let scriptsDir = try? FileManager.default.url(
+            for: .applicationScriptsDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: false
+        ) else {
+            // No scripts dir — still return success (best-effort)
+            sendResponse(context: context, data: ["success": true])
+            return
+        }
+
+        let scriptURL = scriptsDir.appendingPathComponent("run-claude.sh")
+
+        guard FileManager.default.fileExists(atPath: scriptURL.path) else {
+            sendResponse(context: context, data: ["success": true])
+            return
+        }
+
+        do {
+            let task = try NSUserUnixTask(url: scriptURL)
+            task.execute(withArguments: ["--cancel"]) { [weak self] error in
+                if let error = error {
+                    os_log(.error, log: log, "Cancel script execution failed: %{public}@", error.localizedDescription)
+                }
+                self?.sendResponse(context: context, data: ["success": true])
+            }
+        } catch {
+            os_log(.error, log: log, "Failed to create cancel task: %{public}@", error.localizedDescription)
+            sendResponse(context: context, data: ["success": true])
         }
     }
 

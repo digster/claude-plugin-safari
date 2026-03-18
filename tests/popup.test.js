@@ -86,7 +86,9 @@ function createMocks({ tabUrl, lastResult, settings } = {}) {
     'result-meta': makeElement('result-meta'),
     'copy-btn': makeElement('copy-btn'),
     'popout-btn': makeElement('popout-btn'),
-    'error-area': makeElement('error-area', ['hidden'])
+    'error-area': makeElement('error-area', ['hidden']),
+    'stop-btn': makeElement('stop-btn'),
+    'cancelled-area': makeElement('cancelled-area', ['hidden'])
   };
 
   // Capture DOMContentLoaded callback
@@ -136,8 +138,9 @@ function createMocks({ tabUrl, lastResult, settings } = {}) {
     }
   };
 
-  // Track getLastResult messages for URL verification
+  // Track messages for verification
   const getLastResultMessages = [];
+  const cancelMessages = [];
 
   // Global browser mock — configurable per test
   global.browser = {
@@ -156,6 +159,9 @@ function createMocks({ tabUrl, lastResult, settings } = {}) {
           return Promise.resolve(lastResult || null);
         } else if (msg.action === 'getSettings') {
           return Promise.resolve(settings || { prefix: 'Summarize' });
+        } else if (msg.action === 'cancelClaude') {
+          cancelMessages.push(msg);
+          return Promise.resolve({ status: 'cancelled' });
         } else {
           return Promise.resolve(null);
         }
@@ -172,6 +178,7 @@ function createMocks({ tabUrl, lastResult, settings } = {}) {
   };
 
   mocks.getLastResultMessages = getLastResultMessages;
+  mocks.cancelMessages = cancelMessages;
   global.chrome = global.browser;
 
   // Mock timers — capture callbacks for manual invocation
@@ -513,6 +520,162 @@ async function runTests() {
     assert(
       mocks.elements['error-area'].textContent.includes('Failed to initialize'),
       'initialization error → shows init failure message'
+    );
+  }
+
+  // ── Stop button and cancelled state ─────────────────────────
+
+  console.log('\nStop button:');
+
+  // Test 11: Stop button sends cancelClaude and shows cancelled state
+  {
+    const mocks = createMocks({
+      tabUrl: 'https://example.com/running',
+      lastResult: {
+        status: 'running',
+        url: 'https://example.com/running',
+        startTime: 999000
+      }
+    });
+
+    requireFreshPopup();
+    await mocks.domContentLoadedCb();
+
+    // Loading should be visible (running state)
+    assert(
+      !mocks.elements['loading'].classList.contains('hidden'),
+      'stop button setup: loading is visible'
+    );
+
+    // Click the stop button
+    const stopHandlers = mocks.elements['stop-btn']._listeners['click'];
+    assert(stopHandlers && stopHandlers.length > 0, 'stop button has click handler');
+    await stopHandlers[0]();
+
+    assert(
+      mocks.cancelMessages.length > 0,
+      'stop button sends cancelClaude message'
+    );
+    assertEqual(
+      mocks.cancelMessages[0].url,
+      'https://example.com/running',
+      'cancelClaude message includes current URL'
+    );
+    assert(
+      mocks.elements['loading'].classList.contains('hidden'),
+      'stop button click → loading is hidden'
+    );
+    assert(
+      !mocks.elements['cancelled-area'].classList.contains('hidden'),
+      'stop button click → cancelled area is visible'
+    );
+    assert(
+      !mocks.elements['ask-btn'].disabled,
+      'stop button click → ask button is re-enabled'
+    );
+    assert(
+      mocks.elements['stop-btn'].disabled,
+      'stop button is disabled after click (prevents double-click)'
+    );
+  }
+
+  // Test 12: Cancelled status from init shows cancelled area
+  {
+    const mocks = createMocks({
+      tabUrl: 'https://example.com/was-cancelled',
+      lastResult: {
+        status: 'cancelled',
+        url: 'https://example.com/was-cancelled',
+        cancelledAt: 999500
+      }
+    });
+
+    requireFreshPopup();
+    await mocks.domContentLoadedCb();
+
+    assert(
+      !mocks.elements['cancelled-area'].classList.contains('hidden'),
+      'cancelled status from init → cancelled area is visible'
+    );
+    assert(
+      mocks.elements['loading'].classList.contains('hidden'),
+      'cancelled status from init → loading stays hidden'
+    );
+    assert(
+      mocks.elements['result-area'].classList.contains('hidden'),
+      'cancelled status from init → result area stays hidden'
+    );
+  }
+
+  // Test 13: Cancelled status from polling shows cancelled area
+  {
+    const mocks = createMocks({
+      tabUrl: 'https://example.com/current',
+      lastResult: {
+        status: 'running',
+        url: 'https://example.com/current',
+        startTime: 999000
+      }
+    });
+
+    requireFreshPopup();
+    await mocks.domContentLoadedCb();
+
+    // Override sendMessage so poll callback gets cancelled status
+    global.browser.runtime.sendMessage = (msg) => {
+      if (msg.action === 'getLastResult') {
+        return Promise.resolve({
+          status: 'cancelled',
+          url: 'https://example.com/current',
+          cancelledAt: 999500
+        });
+      }
+      return Promise.resolve(null);
+    };
+
+    // Execute poll timeout(s)
+    for (const t of mocks.timeouts) {
+      if (t.fn) await t.fn();
+    }
+
+    assert(
+      mocks.elements['loading'].classList.contains('hidden'),
+      'poll: cancelled status → loading is hidden'
+    );
+    assert(
+      !mocks.elements['cancelled-area'].classList.contains('hidden'),
+      'poll: cancelled status → cancelled area is visible'
+    );
+  }
+
+  // Test 14: Cancelled state from click handler shows cancelled area
+  {
+    const mocks = createMocks({
+      tabUrl: 'https://example.com/page',
+      lastResult: null
+    });
+
+    requireFreshPopup();
+    await mocks.domContentLoadedCb();
+
+    // Override sendMessage to return cancelled for runClaude
+    global.browser.runtime.sendMessage = (msg) => {
+      if (msg.action === 'runClaude') {
+        return Promise.resolve({ status: 'cancelled', url: 'https://example.com/page' });
+      }
+      return Promise.resolve(null);
+    };
+
+    const clickHandlers = mocks.elements['ask-btn']._listeners['click'];
+    await clickHandlers[0]();
+
+    assert(
+      !mocks.elements['cancelled-area'].classList.contains('hidden'),
+      'cancelled from click handler → cancelled area is visible'
+    );
+    assert(
+      !mocks.elements['ask-btn'].disabled,
+      'cancelled from click handler → ask button is re-enabled'
     );
   }
 

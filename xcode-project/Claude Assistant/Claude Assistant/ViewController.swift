@@ -13,22 +13,50 @@ let extensionBundleIdentifier = "com.digster.Claude-Assistant.Extension"
 
 /// Helper script content that bridges the sandboxed extension to the CLI binary.
 /// The script runs outside the sandbox via NSUserUnixTask, allowing it to exec the Claude CLI.
-/// v2: Uses shift 3 + "$@" to forward extra CLI flags (e.g., --allowedTools).
+/// v3: PID tracking for cancellation support. Runs claude as a background child, writes PID
+/// to /tmp/claude-assistant.pid, and waits. A --cancel flag reads the PID and kills the process.
+/// Still uses shift 3 + "$@" for backward compatibility checks.
 private let helperScriptContent = """
 #!/bin/bash
-# Helper script for Claude Assistant Safari Extension (v2)
-# Executes Claude CLI with provided arguments from outside the app sandbox.
-# $1 = CLI path, $2 = prompt, $3 = output format, $4+ = extra CLI flags
+# Helper script for Claude Assistant Safari Extension (v3)
+# Supports PID tracking for cancellation.
+# Cancel mode: run-claude.sh --cancel
+# Normal mode: run-claude.sh <cli_path> <prompt> <format> [extra flags...]
+
+PID_FILE="/tmp/claude-assistant.pid"
+
+# Cancel mode — kill the running process and exit
+if [ "$1" = "--cancel" ]; then
+  if [ -f "$PID_FILE" ]; then
+    PID=$(cat "$PID_FILE")
+    kill -TERM "$PID" 2>/dev/null
+    rm -f "$PID_FILE"
+  fi
+  exit 0
+fi
+
 export HOME="$HOME"
 export PATH="/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin:/usr/bin:/bin:$PATH"
 CLI="$1"; PROMPT="$2"; FORMAT="$3"
 shift 3
-exec "$CLI" -p "$PROMPT" --output-format "$FORMAT" "$@"
+
+# Clean up PID file on exit (normal completion or signal)
+trap 'rm -f "$PID_FILE"' EXIT
+
+# Run CLI as background child and track its PID for cancellation
+"$CLI" -p "$PROMPT" --output-format "$FORMAT" "$@" &
+CLAUDE_PID=$!
+echo "$CLAUDE_PID" > "$PID_FILE"
+wait "$CLAUDE_PID"
 """
 
 /// Marker string used to detect whether the installed helper script supports extra CLI flags.
 /// If the installed script doesn't contain this, the user needs to reinstall.
 private let scriptVersionMarker = "shift 3"
+
+/// Marker string for v3 cancel support detection.
+/// If the installed script contains this, it supports --cancel mode.
+private let cancelSupportMarker = "PID_FILE"
 
 class ViewController: NSViewController, WKNavigationDelegate, WKScriptMessageHandler {
 

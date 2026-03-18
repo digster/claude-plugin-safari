@@ -12,6 +12,8 @@ const resultMeta = document.getElementById('result-meta');
 const copyBtn = document.getElementById('copy-btn');
 const popoutBtn = document.getElementById('popout-btn');
 const errorArea = document.getElementById('error-area');
+const stopBtn = document.getElementById('stop-btn');
+const cancelledArea = document.getElementById('cancelled-area');
 
 let currentUrl = '';
 let elapsedTimer = null;
@@ -55,6 +57,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         showResult(lastResult);
       } else if (lastResult.status === 'error') {
         showError(lastResult.error);
+      } else if (lastResult.status === 'cancelled') {
+        showCancelled();
       }
     }
   } catch (err) {
@@ -71,13 +75,17 @@ askBtn.addEventListener('click', async () => {
   askBtn.disabled = true;
   hideError();
   hideResult();
+  hideCancelled();
   showLoading();
 
   const result = await sendMessage({ action: 'runClaude', url: currentUrl });
 
   stopLoading();
 
-  if (result?.status === 'error') {
+  if (result?.status === 'cancelled') {
+    showCancelled();
+    askBtn.disabled = false;
+  } else if (result?.status === 'error') {
     showError(result.error);
     askBtn.disabled = false;
   } else if (result?.status === 'complete') {
@@ -87,6 +95,14 @@ askBtn.addEventListener('click', async () => {
     showError(result?.error || 'No response received. Check that the extension is enabled.');
     askBtn.disabled = false;
   }
+});
+
+stopBtn.addEventListener('click', async () => {
+  stopBtn.disabled = true;
+  await sendMessage({ action: 'cancelClaude', url: currentUrl });
+  stopLoading();
+  showCancelled();
+  askBtn.disabled = false;
 });
 
 settingsBtn.addEventListener('click', () => {
@@ -113,6 +129,7 @@ popoutBtn.addEventListener('click', () => {
 function showLoading(startTime) {
   loadingEl.classList.remove('hidden');
   askBtn.classList.add('hidden');
+  stopBtn.disabled = false;
 
   const start = startTime || Date.now();
   elapsedTimer = setInterval(() => {
@@ -182,6 +199,14 @@ function hideResult() {
   resultArea.classList.add('hidden');
 }
 
+function showCancelled() {
+  cancelledArea.classList.remove('hidden');
+}
+
+function hideCancelled() {
+  cancelledArea.classList.add('hidden');
+}
+
 /**
  * Poll for result completion when popup was reopened during a running request.
  * Checks every 2 seconds until the result is no longer 'running'.
@@ -203,6 +228,8 @@ async function pollForResult() {
         showResult(result);
       } else if (result.status === 'error') {
         showError(result.error);
+      } else if (result.status === 'cancelled') {
+        showCancelled();
       }
       askBtn.disabled = false;
       return;

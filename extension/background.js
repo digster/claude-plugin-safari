@@ -118,6 +118,8 @@ async function sendNativeMessage(payload) {
 /**
  * Build the full prompt from prefix + URL and send to native handler
  * for CLI execution. Stores the result for recovery if popup closes.
+ * Checks for cancellation after CLI completes to handle the race condition
+ * where cancel arrives while the CLI is still running.
  */
 async function runClaude(url) {
   const settings = await getSettings();
@@ -147,6 +149,12 @@ async function runClaude(url) {
       model: settings.model || ''
     });
 
+    // Check if request was cancelled while CLI was running
+    const currentState = await getLastResult(url);
+    if (currentState?.status === 'cancelled') {
+      return currentState;
+    }
+
     // Parse the response from the native handler
     const result = {
       status: 'complete',
@@ -171,6 +179,12 @@ async function runClaude(url) {
 
     return result;
   } catch (err) {
+    // Check if request was cancelled (cancel saves state before killing process)
+    const currentState = await getLastResult(url);
+    if (currentState?.status === 'cancelled') {
+      return currentState;
+    }
+
     const errorResult = {
       status: 'error',
       prompt,
@@ -180,6 +194,30 @@ async function runClaude(url) {
     await saveLastResult(errorResult);
     return errorResult;
   }
+}
+
+/**
+ * Cancel a running Claude CLI request.
+ * Saves cancelled state to disk FIRST (so runClaude's completion check sees it),
+ * then sends the native kill message (best-effort).
+ */
+async function cancelClaude(url) {
+  // Save cancelled state before sending kill — handles the race where
+  // CLI completes before the kill arrives
+  await saveLastResult({
+    status: 'cancelled',
+    url,
+    cancelledAt: Date.now()
+  });
+
+  // Send kill signal via native handler (best-effort — process may already be done)
+  try {
+    await sendNativeMessage({ action: 'cancelClaude' });
+  } catch (err) {
+    console.error('Failed to send cancel signal:', err);
+  }
+
+  return { status: 'cancelled' };
 }
 
 // ── CLI verification ────────────────────────────────────────
@@ -207,6 +245,9 @@ browser.runtime.onMessage.addListener((message, _sender) => {
       switch (message.action) {
         case 'runClaude':
           return await runClaude(message.url);
+
+        case 'cancelClaude':
+          return await cancelClaude(message.url);
 
         case 'getSettings':
           return await getSettings();
@@ -280,6 +321,7 @@ if (typeof module !== 'undefined' && module.exports) {
     addToHistory,
     clearAllCache,
     runClaude,
+    cancelClaude,
     verifyCli,
     sendNativeMessage
   };
