@@ -32,14 +32,14 @@ A Safari Web Extension that bridges the browser to a local Claude CLI binary. Th
 |------|---------|
 | `extension/background.js` | Central message router. Handles all actions (`runClaude`, `getSettings`, `saveSettings`, `verifyCli`, etc.). Bridges to native handler via `browser.runtime.sendNativeMessage()`. Stores results for recovery. |
 | `extension/popup/popup.js` | Toolbar popup UI. Shows prefix + URL preview, "Ask Claude" button, loading state with elapsed timer, result display with copy/pop-out. |
-| `extension/settings/settings.js` | Configuration page. Prefix textarea, CLI path input with verify button, allowed tools, effort level, and model selection. |
+| `extension/settings/settings.js` | Configuration page. Prefix textarea, CLI path input with verify button, allowed tools, effort level, model selection, and "Clear All Cache" button (nukes all disk cache + history). |
 | `extension/result/result.js` | Full-page pop-out for long responses. Loads last result from storage, renders with markdown. |
 
 ### Native Layer (Swift)
 
 | File | Purpose |
 |------|---------|
-| `SafariWebExtensionHandler.swift` | Receives `sendNativeMessage` calls from JS. Actions: `runClaude` (uses `NSUserUnixTask` to execute a helper script that invokes the CLI), `verifyCli` (checks if the helper script is installed), `storeResult`/`getStoredResult`/`clearStoredResult` (disk-based result storage to bypass browser.storage.local quota). Runs sandboxed. |
+| `SafariWebExtensionHandler.swift` | Receives `sendNativeMessage` calls from JS. Actions: `runClaude` (uses `NSUserUnixTask` to execute a helper script that invokes the CLI), `verifyCli` (checks if the helper script is installed), `storeResult`/`getStoredResult`/`clearStoredResult`/`clearAllResults` (disk-based result storage to bypass browser.storage.local quota). `getStoredResult` with a URL returns null on cache miss (no fallback to lastResult). Runs sandboxed. |
 | `ViewController.swift` | App container UI — shows extension enable status, links to Safari preferences. Handles helper script installation via `NSSavePanel` to `~/Library/Application Scripts/<extension-bundle-id>/`. |
 | `run-claude.sh` (installed) | Helper script (v2) placed in Application Scripts dir. Runs **outside** the sandbox via `NSUserUnixTask`. Sets up `PATH`/`HOME` env, uses `shift 3` + `"$@"` to forward extra CLI flags (e.g., `--allowedTools`), and `exec`s the Claude CLI binary. |
 | `AppDelegate.swift` | Standard app delegate, terminates after last window closes. |

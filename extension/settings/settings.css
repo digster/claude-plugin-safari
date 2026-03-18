@@ -155,7 +155,37 @@ textarea:focus, input[type="text"]:focus {
   display: none;
 }
 
+/* Danger button (destructive actions like clearing cache) */
+.danger-btn {
+  width: 100%;
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  background: transparent;
+  color: #f87171;
+  border: 1px solid #f87171;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.danger-btn:hover {
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.danger-btn:active {
+  transform: scale(0.98);
+}
+
+.danger-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Actions */
 .actions {
   margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }

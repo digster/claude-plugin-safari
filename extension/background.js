@@ -75,6 +75,33 @@ async function addToHistory(entry) {
   }
 }
 
+// ── Cache management ────────────────────────────────────────
+
+/**
+ * Clear all cached results from native disk and history from browser storage.
+ * Deletes lastResult.json, all per-URL cache files, and the history array.
+ */
+async function clearAllCache() {
+  let clearedCount = 0;
+
+  // Clear native disk files (lastResult.json + results/ directory)
+  try {
+    const response = await sendNativeMessage({ action: 'clearAllResults' });
+    clearedCount = response?.clearedCount || 0;
+  } catch (err) {
+    console.error('Failed to clear native disk cache:', err);
+  }
+
+  // Clear history from browser.storage.local
+  try {
+    await browser.storage.local.remove('history');
+  } catch (err) {
+    console.error('Failed to clear history from storage:', err);
+  }
+
+  return { success: true, clearedCount };
+}
+
 // ── Native messaging bridge ─────────────────────────────────
 
 /**
@@ -203,6 +230,9 @@ browser.runtime.onMessage.addListener((message, _sender) => {
         case 'getHistory':
           return await getHistory();
 
+        case 'clearAllCache':
+          return await clearAllCache();
+
         case 'verifyCli':
           return await verifyCli(message.cliPath);
 
@@ -248,6 +278,7 @@ if (typeof module !== 'undefined' && module.exports) {
     saveLastResult,
     getHistory,
     addToHistory,
+    clearAllCache,
     runClaude,
     verifyCli,
     sendNativeMessage

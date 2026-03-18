@@ -108,3 +108,14 @@ Changes:
 4. **tests/background.test.js**: Per-URL mock with `perUrl` map, isolation tests, payload verification, handler forwarding
 5. **tests/popup.test.js**: Track `getLastResultMessages`, verify URL inclusion, update Test 2 for per-URL miss
 6. **ARCHITECTURE.md**: Document `results/` directory structure and per-URL caching
+
+## 2026-03-17 (session 11) — Clear All Cache + Fix Stale Fallback
+
+Add "Clear All Cache" button in settings and fix stale-data fallback in Swift handler. When a per-URL cache lookup misses, `handleGetStoredResult` falls through to `lastResult.json` which may belong to a different URL. Fix: return null on per-URL miss. Add a settings button to nuke all cached results + history.
+
+Changes:
+1. **SafariWebExtensionHandler.swift**: Add `handleClearAllResults()` (deletes lastResult.json + all files in results/), fix `handleGetStoredResult` fallback (return null when URL provided but not found)
+2. **background.js**: Add `clearAllCache()` function (native clear + history removal), message handler case, export
+3. **settings.html/css/js**: Add "Clear All Cache" danger button with click handler
+4. **tests/background.test.js**: Update mocks for no-fallback behavior, fix existing test, add 15 new tests
+5. **ARCHITECTURE.md**: Document `clearAllResults` action and settings button

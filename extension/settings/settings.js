@@ -8,6 +8,7 @@ const modelInput = document.getElementById('model-input');
 const verifyBtn = document.getElementById('verify-btn');
 const verifyStatus = document.getElementById('verify-status');
 const saveBtn = document.getElementById('save-btn');
+const clearCacheBtn = document.getElementById('clear-cache-btn');
 const messageEl = document.getElementById('message');
 
 // ── Load current settings on page open ──────────────────────
@@ -42,6 +43,27 @@ saveBtn.addEventListener('click', async () => {
     showMessage('Error saving settings: ' + result.error, 'error');
   } else {
     showMessage('Settings saved.', 'success');
+  }
+});
+
+// ── Clear all cache ─────────────────────────────────────────
+
+clearCacheBtn.addEventListener('click', async () => {
+  clearCacheBtn.disabled = true;
+  clearCacheBtn.textContent = 'Clearing...';
+
+  const result = await sendMessage({ action: 'clearAllCache' });
+
+  clearCacheBtn.disabled = false;
+  clearCacheBtn.textContent = 'Clear All Cache';
+
+  if (!result) {
+    showMessage('Failed to clear cache. Extension may not be responding.', 'error');
+  } else if (result.error) {
+    showMessage('Error clearing cache: ' + result.error, 'error');
+  } else {
+    const count = result.clearedCount || 0;
+    showMessage(`Cache cleared. ${count} file${count !== 1 ? 's' : ''} removed.`, 'success');
   }
 });
 

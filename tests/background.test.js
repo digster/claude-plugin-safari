@@ -74,11 +74,14 @@ const browser = {
           return { success: true };
         }
         case 'getStoredResult': {
-          // Per-URL lookup if url is provided
-          if (payload.url && nativeDiskStore.perUrl && nativeDiskStore.perUrl[payload.url]) {
-            return { result: nativeDiskStore.perUrl[payload.url] };
+          // Per-URL lookup — return null on miss (no fallback to lastResult)
+          if (payload.url) {
+            if (nativeDiskStore.perUrl && nativeDiskStore.perUrl[payload.url]) {
+              return { result: nativeDiskStore.perUrl[payload.url] };
+            }
+            return { result: null };
           }
-          // Fall through to lastResult
+          // No URL — return lastResult (pop-out view)
           return { result: nativeDiskStore.lastResult || null };
         }
         case 'clearStoredResult': {
@@ -88,6 +91,18 @@ const browser = {
             delete nativeDiskStore.lastResult;
           }
           return { success: true };
+        }
+        case 'clearAllResults': {
+          let clearedCount = 0;
+          if (nativeDiskStore.lastResult) {
+            delete nativeDiskStore.lastResult;
+            clearedCount++;
+          }
+          if (nativeDiskStore.perUrl) {
+            clearedCount += Object.keys(nativeDiskStore.perUrl).length;
+            nativeDiskStore.perUrl = {};
+          }
+          return { success: true, clearedCount };
         }
         default:
           return { result: 'mock response' };
@@ -232,7 +247,7 @@ async function runTests() {
   let capturedNativePayload = null;
   browser.runtime.sendNativeMessage = async (_id, payload) => {
     // Capture runClaude payloads, route storage through the original mock
-    if (payload.action && ['storeResult', 'getStoredResult', 'clearStoredResult'].includes(payload.action)) {
+    if (payload.action && ['storeResult', 'getStoredResult', 'clearStoredResult', 'clearAllResults'].includes(payload.action)) {
       return originalSendNative(_id, payload);
     }
     capturedNativePayload = payload;
@@ -294,7 +309,7 @@ async function runTests() {
   await bg.saveSettings({ effort: 'high', model: 'claude-sonnet-4-6' });
   capturedNativePayload = null;
   browser.runtime.sendNativeMessage = async (_id, payload) => {
-    if (payload.action && ['storeResult', 'getStoredResult', 'clearStoredResult'].includes(payload.action)) {
+    if (payload.action && ['storeResult', 'getStoredResult', 'clearStoredResult', 'clearAllResults'].includes(payload.action)) {
       return originalSendNative(_id, payload);
     }
     capturedNativePayload = payload;
@@ -455,10 +470,9 @@ async function runTests() {
   assertEqual(capturedPayload.action, 'clearStoredResult', 'clearLastResult sends clearStoredResult');
   assertEqual(capturedPayload.url, 'https://site-a.com', 'clearLastResult forwards url to native handler');
 
-  // URL A should be gone but URL B remains
+  // URL A should be gone (returns null, no stale fallback) but URL B remains
   const afterClearA = await bg.getLastResult('https://site-a.com');
-  // Falls through to lastResult (B) since per-URL A is cleared
-  assertEqual(afterClearA.url, 'https://site-b.com', 'after clearing A, fetching A falls through to latest');
+  assertEqual(afterClearA, null, 'after clearing A, fetching A returns null (no stale fallback)');
 
   const afterClearB = await bg.getLastResult('https://site-b.com');
   assertEqual(afterClearB.url, 'https://site-b.com', 'URL B still cached after clearing A');
@@ -507,6 +521,77 @@ async function runTests() {
     unknownResult && unknownResult.error && unknownResult.error.includes('nonExistentAction'),
     'unknown action returns error message via Promise'
   );
+
+  // Test: clearAllCache clears disk files and history
+  console.log('\nclearAllCache:');
+  nativeDiskStore = {};
+  delete mockStorage.history;
+  await bg.saveLastResult(resultA);
+  await bg.saveLastResult(resultB);
+  await bg.addToHistory({ prompt: 'entry-1', timestamp: 1 });
+  await bg.addToHistory({ prompt: 'entry-2', timestamp: 2 });
+
+  const clearResult = await bg.clearAllCache();
+  assertEqual(clearResult.success, true, 'clearAllCache returns success');
+  // 1 lastResult + 2 per-URL files = 3
+  assertEqual(clearResult.clearedCount, 3, 'clearAllCache reports correct cleared count');
+
+  // Verify disk is empty
+  const afterClearAll = await bg.getLastResult();
+  assertEqual(afterClearAll, null, 'lastResult is null after clearAllCache');
+  const afterClearUrlA = await bg.getLastResult('https://site-a.com');
+  assertEqual(afterClearUrlA, null, 'per-URL A is null after clearAllCache');
+  const afterClearUrlB = await bg.getLastResult('https://site-b.com');
+  assertEqual(afterClearUrlB, null, 'per-URL B is null after clearAllCache');
+
+  // Verify history is cleared
+  const afterClearHistory = await bg.getHistory();
+  assertEqual(afterClearHistory.length, 0, 'history is empty after clearAllCache');
+
+  // Test: clearAllCache when already empty
+  console.log('\nclearAllCache (already empty):');
+  nativeDiskStore = {};
+  delete mockStorage.history;
+  const emptyResult = await bg.clearAllCache();
+  assertEqual(emptyResult.success, true, 'clearAllCache succeeds when already empty');
+  assertEqual(emptyResult.clearedCount, 0, 'clearAllCache reports 0 cleared when empty');
+
+  // Test: clearAllCache resilience to native failure
+  console.log('\nclearAllCache native failure resilience:');
+  browser.runtime.sendNativeMessage = async () => {
+    throw new Error('Native messaging unavailable');
+  };
+  let clearAllError = null;
+  try {
+    const failedClear = await bg.clearAllCache();
+    assertEqual(failedClear.success, true, 'clearAllCache returns success even on native failure');
+    assertEqual(failedClear.clearedCount, 0, 'clearedCount is 0 on native failure');
+  } catch (err) {
+    clearAllError = err;
+  }
+  assertEqual(clearAllError, null, 'clearAllCache does not throw on native message failure');
+  browser.runtime.sendNativeMessage = originalSendNative;
+
+  // Test: clearAllCache message handler integration
+  console.log('\nclearAllCache message handler:');
+  nativeDiskStore = {};
+  delete mockStorage.history;
+  await bg.saveLastResult(resultA);
+  await bg.addToHistory({ prompt: 'entry-1', timestamp: 1 });
+  const clearAllHandler = browser.runtime._onMessageCallback;
+  const handlerClearResult = await clearAllHandler({ action: 'clearAllCache' }, {});
+  assertEqual(handlerClearResult.success, true, 'message handler returns success for clearAllCache');
+  assert(handlerClearResult.clearedCount >= 0, 'message handler returns clearedCount for clearAllCache');
+
+  // Test: no stale fallback — fetching uncached URL returns null, not lastResult
+  console.log('\nno stale fallback for uncached URL:');
+  nativeDiskStore = {};
+  await bg.saveLastResult(resultA);
+  const uncachedResult = await bg.getLastResult('https://never-cached.com');
+  assertEqual(uncachedResult, null, 'fetching uncached URL returns null, not stale lastResult');
+  // But lastResult is still accessible without URL (pop-out view)
+  const latestResult = await bg.getLastResult();
+  assertEqual(latestResult.url, 'https://site-a.com', 'lastResult still accessible without URL param');
 
   // ── Summary ──────────────────────────────────────────────
 
