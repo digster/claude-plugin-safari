@@ -38,6 +38,7 @@ function assertEqual(actual, expected, message) {
 const mockStorage = {};
 
 // In-memory store that simulates native disk storage for lastResult
+// Includes per-URL storage map to simulate the results/ directory
 let nativeDiskStore = {};
 
 const browser = {
@@ -61,16 +62,33 @@ const browser = {
   },
   runtime: {
     sendNativeMessage: async (_id, payload) => {
-      // Route storage actions to in-memory disk store
+      // Route storage actions to in-memory disk store (simulates Swift handler)
       switch (payload.action) {
-        case 'storeResult':
+        case 'storeResult': {
           nativeDiskStore.lastResult = payload.result;
+          // Also store per-URL if result has a url field
+          if (payload.result && payload.result.url) {
+            if (!nativeDiskStore.perUrl) nativeDiskStore.perUrl = {};
+            nativeDiskStore.perUrl[payload.result.url] = payload.result;
+          }
           return { success: true };
-        case 'getStoredResult':
+        }
+        case 'getStoredResult': {
+          // Per-URL lookup if url is provided
+          if (payload.url && nativeDiskStore.perUrl && nativeDiskStore.perUrl[payload.url]) {
+            return { result: nativeDiskStore.perUrl[payload.url] };
+          }
+          // Fall through to lastResult
           return { result: nativeDiskStore.lastResult || null };
-        case 'clearStoredResult':
-          delete nativeDiskStore.lastResult;
+        }
+        case 'clearStoredResult': {
+          if (payload.url && nativeDiskStore.perUrl) {
+            delete nativeDiskStore.perUrl[payload.url];
+          } else {
+            delete nativeDiskStore.lastResult;
+          }
           return { success: true };
+        }
         default:
           return { result: 'mock response' };
       }
@@ -371,6 +389,91 @@ async function runTests() {
   }
   assertEqual(addHistoryError, null, 'addToHistory does not throw when storage.set() fails');
   browser.storage.local.set = originalSet;
+
+  // Test: getLastResult(url) includes url key in native payload
+  console.log('\ngetLastResult per-URL payload:');
+  browser.runtime.sendNativeMessage = async (_id, payload) => {
+    capturedPayload = payload;
+    return originalSendNative(_id, payload);
+  };
+  capturedPayload = null;
+  await bg.getLastResult('https://example.com/page-A');
+  assertEqual(capturedPayload.action, 'getStoredResult', 'sends getStoredResult action with URL');
+  assertEqual(capturedPayload.url, 'https://example.com/page-A', 'includes url in payload');
+
+  // Test: getLastResult() without URL does not include url key
+  console.log('\ngetLastResult without URL:');
+  capturedPayload = null;
+  await bg.getLastResult();
+  assertEqual(capturedPayload.action, 'getStoredResult', 'sends getStoredResult action without URL');
+  assert(!('url' in capturedPayload), 'no url key in payload when called without URL');
+  browser.runtime.sendNativeMessage = originalSendNative;
+
+  // Test: per-URL cache isolation — store A, store B, fetch A returns A, fetch B returns B
+  console.log('\nper-URL cache isolation:');
+  nativeDiskStore = {};
+  const resultA = {
+    status: 'complete',
+    prompt: 'Summarize https://site-a.com',
+    url: 'https://site-a.com',
+    response: { result: 'Summary of A' }
+  };
+  const resultB = {
+    status: 'complete',
+    prompt: 'Summarize https://site-b.com',
+    url: 'https://site-b.com',
+    response: { result: 'Summary of B' }
+  };
+  await bg.saveLastResult(resultA);
+  await bg.saveLastResult(resultB);
+
+  const fetchedA = await bg.getLastResult('https://site-a.com');
+  assertEqual(fetchedA.url, 'https://site-a.com', 'fetching by URL A returns result A');
+  assertEqual(fetchedA.response.result, 'Summary of A', 'result A content is correct');
+
+  const fetchedB = await bg.getLastResult('https://site-b.com');
+  assertEqual(fetchedB.url, 'https://site-b.com', 'fetching by URL B returns result B');
+  assertEqual(fetchedB.response.result, 'Summary of B', 'result B content is correct');
+
+  // Fetching without URL returns the latest (B, since it was stored last)
+  const fetchedLatest = await bg.getLastResult();
+  assertEqual(fetchedLatest.url, 'https://site-b.com', 'fetching without URL returns latest (B)');
+
+  // Test: clearLastResult with URL only clears that URL's cache
+  console.log('\nclearLastResult per-URL:');
+  nativeDiskStore = {};
+  await bg.saveLastResult(resultA);
+  await bg.saveLastResult(resultB);
+
+  // Clear only URL A's cache via the message handler
+  browser.runtime.sendNativeMessage = async (_id, payload) => {
+    capturedPayload = payload;
+    return originalSendNative(_id, payload);
+  };
+  const clearHandler = browser.runtime._onMessageCallback;
+  await clearHandler({ action: 'clearLastResult', url: 'https://site-a.com' }, {});
+  assertEqual(capturedPayload.action, 'clearStoredResult', 'clearLastResult sends clearStoredResult');
+  assertEqual(capturedPayload.url, 'https://site-a.com', 'clearLastResult forwards url to native handler');
+
+  // URL A should be gone but URL B remains
+  const afterClearA = await bg.getLastResult('https://site-a.com');
+  // Falls through to lastResult (B) since per-URL A is cleared
+  assertEqual(afterClearA.url, 'https://site-b.com', 'after clearing A, fetching A falls through to latest');
+
+  const afterClearB = await bg.getLastResult('https://site-b.com');
+  assertEqual(afterClearB.url, 'https://site-b.com', 'URL B still cached after clearing A');
+  browser.runtime.sendNativeMessage = originalSendNative;
+
+  // Test: getLastResult message handler forwards URL
+  console.log('\nonMessage getLastResult forwards URL:');
+  nativeDiskStore = {};
+  await bg.saveLastResult(resultA);
+  await bg.saveLastResult(resultB);
+  const handler = browser.runtime._onMessageCallback;
+  const handlerResultA = await handler({ action: 'getLastResult', url: 'https://site-a.com' }, {});
+  assertEqual(handlerResultA.url, 'https://site-a.com', 'message handler returns per-URL result for A');
+  const handlerResultNoUrl = await handler({ action: 'getLastResult' }, {});
+  assertEqual(handlerResultNoUrl.url, 'https://site-b.com', 'message handler returns latest when no URL');
 
   // Test: onMessage listener uses Promise-based pattern (not callback-based)
   console.log('\nonMessage listener pattern:');

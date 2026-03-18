@@ -14,6 +14,7 @@
 import SafariServices
 import os.log
 import Foundation
+import CryptoKit
 
 private let log = OSLog(subsystem: "com.digster.Claude-Assistant.Extension", category: "handler")
 
@@ -40,9 +41,9 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         case "storeResult":
             handleStoreResult(context: context, message: msg)
         case "getStoredResult":
-            handleGetStoredResult(context: context)
+            handleGetStoredResult(context: context, message: msg)
         case "clearStoredResult":
-            handleClearStoredResult(context: context)
+            handleClearStoredResult(context: context, message: msg)
         default:
             sendResponse(context: context, data: ["error": "Unknown action: \(action)"])
         }
@@ -229,7 +230,73 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         return storageDir
     }
 
+    /// Returns the per-URL result file path using SHA-256 hash of the URL.
+    /// Creates the results/ subdirectory if needed.
+    /// Path: <storageDir>/results/<first-16-hex-of-SHA256>.json
+    private func resultFileURL(for url: String) -> URL? {
+        guard let storageDir = storageDirectory() else { return nil }
+
+        let resultsDir = storageDir.appendingPathComponent("results")
+
+        // Create results/ subdirectory if it doesn't exist
+        if !FileManager.default.fileExists(atPath: resultsDir.path) {
+            do {
+                try FileManager.default.createDirectory(
+                    at: resultsDir,
+                    withIntermediateDirectories: true,
+                    attributes: nil
+                )
+            } catch {
+                os_log(.error, log: log, "Failed to create results directory: %{public}@", error.localizedDescription)
+                return nil
+            }
+        }
+
+        // SHA-256 hash the URL, take first 16 hex chars (64 bits — collision-safe for 25 files)
+        let digest = SHA256.hash(data: Data(url.utf8))
+        let hashPrefix = digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+
+        return resultsDir.appendingPathComponent("\(hashPrefix).json")
+    }
+
+    /// Evicts oldest per-URL result files beyond the 25-file cap.
+    /// Sorts by modification date and deletes the oldest excess files.
+    private func evictOldResults() {
+        guard let storageDir = storageDirectory() else { return }
+
+        let resultsDir = storageDir.appendingPathComponent("results")
+        let fm = FileManager.default
+
+        guard let files = try? fm.contentsOfDirectory(
+            at: resultsDir,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+
+        // Only evict if over the cap
+        let maxFiles = 25
+        guard files.count > maxFiles else { return }
+
+        // Sort by modification date (newest first)
+        let sorted = files.compactMap { url -> (URL, Date)? in
+            guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey]),
+                  let date = values.contentModificationDate else { return nil }
+            return (url, date)
+        }.sorted { $0.1 > $1.1 }
+
+        // Delete files beyond the cap
+        for (url, _) in sorted.dropFirst(maxFiles) {
+            do {
+                try fm.removeItem(at: url)
+                os_log(.default, log: log, "Evicted old result cache: %{public}@", url.lastPathComponent)
+            } catch {
+                os_log(.error, log: log, "Failed to evict result cache: %{public}@", error.localizedDescription)
+            }
+        }
+    }
+
     /// Write a result dictionary to lastResult.json on disk.
+    /// Also writes to a per-URL cache file (results/<hash>.json) if the result contains a url field.
     private func handleStoreResult(context: NSExtensionContext, message: [String: Any]) {
         guard let storageDir = storageDirectory() else {
             sendResponse(context: context, data: ["error": "Cannot access storage directory"])
@@ -243,7 +310,17 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
             // Wrap in a container so we can store null/nil as { "result": null }
             let wrapper: [String: Any] = ["result": resultData]
             let jsonData = try JSONSerialization.data(withJSONObject: wrapper, options: [.prettyPrinted])
+
+            // Always write to lastResult.json (most-recent pointer for pop-out view)
             try jsonData.write(to: fileURL, options: .atomic)
+
+            // Also write to per-URL cache if the result contains a url field
+            if let resultDict = resultData as? [String: Any],
+               let url = resultDict["url"] as? String,
+               let perUrlFile = resultFileURL(for: url) {
+                try jsonData.write(to: perUrlFile, options: .atomic)
+                evictOldResults()
+            }
 
             os_log(.default, log: log, "Stored result to disk (%{public}d bytes)", jsonData.count)
             sendResponse(context: context, data: ["success": true])
@@ -253,17 +330,35 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         }
     }
 
-    /// Read the stored result from lastResult.json on disk.
-    private func handleGetStoredResult(context: NSExtensionContext) {
+    /// Read a stored result from disk.
+    /// If a url is provided in the message, looks up the per-URL cache file first.
+    /// Falls through to lastResult.json if no URL given or per-URL file not found.
+    private func handleGetStoredResult(context: NSExtensionContext, message: [String: Any]) {
         guard let storageDir = storageDirectory() else {
             sendResponse(context: context, data: ["result": NSNull()])
             return
         }
 
+        // Try per-URL cache first if a url is provided
+        if let url = message["url"] as? String,
+           let perUrlFile = resultFileURL(for: url),
+           FileManager.default.fileExists(atPath: perUrlFile.path) {
+            do {
+                let jsonData = try Data(contentsOf: perUrlFile)
+                if let wrapper = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+                    sendResponse(context: context, data: wrapper)
+                    return
+                }
+            } catch {
+                os_log(.error, log: log, "Failed to read per-URL result: %{public}@", error.localizedDescription)
+                // Fall through to lastResult.json
+            }
+        }
+
+        // Fall through to lastResult.json (most-recent result)
         let fileURL = storageDir.appendingPathComponent("lastResult.json")
 
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            // No stored result — return null (not an error)
             sendResponse(context: context, data: ["result": NSNull()])
             return
         }
@@ -271,7 +366,6 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         do {
             let jsonData = try Data(contentsOf: fileURL)
             if let wrapper = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
-                // Return the full wrapper which contains { "result": <data> }
                 sendResponse(context: context, data: wrapper)
             } else {
                 sendResponse(context: context, data: ["result": NSNull()])
@@ -282,21 +376,36 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         }
     }
 
-    /// Delete lastResult.json from disk.
-    private func handleClearStoredResult(context: NSExtensionContext) {
+    /// Delete a stored result from disk.
+    /// If a url is provided in the message, deletes that URL's per-URL cache file.
+    /// Otherwise deletes lastResult.json (existing behavior).
+    private func handleClearStoredResult(context: NSExtensionContext, message: [String: Any]) {
         guard let storageDir = storageDirectory() else {
             sendResponse(context: context, data: ["success": true])
             return
         }
 
-        let fileURL = storageDir.appendingPathComponent("lastResult.json")
-
-        if FileManager.default.fileExists(atPath: fileURL.path) {
-            do {
-                try FileManager.default.removeItem(at: fileURL)
-                os_log(.default, log: log, "Cleared stored result from disk")
-            } catch {
-                os_log(.error, log: log, "Failed to clear stored result: %{public}@", error.localizedDescription)
+        if let url = message["url"] as? String,
+           let perUrlFile = resultFileURL(for: url) {
+            // Delete the per-URL cache file
+            if FileManager.default.fileExists(atPath: perUrlFile.path) {
+                do {
+                    try FileManager.default.removeItem(at: perUrlFile)
+                    os_log(.default, log: log, "Cleared per-URL result cache for: %{public}@", url)
+                } catch {
+                    os_log(.error, log: log, "Failed to clear per-URL result: %{public}@", error.localizedDescription)
+                }
+            }
+        } else {
+            // No URL — delete lastResult.json (existing behavior)
+            let fileURL = storageDir.appendingPathComponent("lastResult.json")
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                do {
+                    try FileManager.default.removeItem(at: fileURL)
+                    os_log(.default, log: log, "Cleared stored result from disk")
+                } catch {
+                    os_log(.error, log: log, "Failed to clear stored result: %{public}@", error.localizedDescription)
+                }
             }
         }
 

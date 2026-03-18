@@ -20,11 +20,10 @@ let elapsedTimer = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
   try {
-    // Load settings and current tab URL in parallel
-    const [settings, tabs, lastResult] = await Promise.all([
+    // Load settings and current tab URL in parallel (lastResult needs currentUrl first)
+    const [settings, tabs] = await Promise.all([
       sendMessage({ action: 'getSettings' }),
-      browser.tabs.query({ active: true, currentWindow: true }),
-      sendMessage({ action: 'getLastResult' })
+      browser.tabs.query({ active: true, currentWindow: true })
     ]);
 
     // Display prefix
@@ -43,6 +42,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       urlDisplay.textContent = 'No active tab';
       askBtn.disabled = true;
     }
+
+    // Fetch per-URL cached result (falls through to lastResult.json if no per-URL match)
+    const lastResult = await sendMessage({ action: 'getLastResult', url: currentUrl });
 
     // Check if there's a running or completed result to restore (only for current URL)
     if (lastResult && lastResult.url === currentUrl) {
@@ -186,7 +188,7 @@ function hideResult() {
  */
 async function pollForResult() {
   const check = async () => {
-    const result = await sendMessage({ action: 'getLastResult' });
+    const result = await sendMessage({ action: 'getLastResult', url: currentUrl });
 
     // Stop polling if result is no longer for the current URL
     if (!result || result.url !== currentUrl) {

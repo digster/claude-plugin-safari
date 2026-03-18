@@ -33,9 +33,11 @@ async function saveSettings(newSettings) {
   return merged;
 }
 
-async function getLastResult() {
+async function getLastResult(url) {
   try {
-    const response = await sendNativeMessage({ action: 'getStoredResult' });
+    const payload = { action: 'getStoredResult' };
+    if (url) payload.url = url;
+    const response = await sendNativeMessage(payload);
     return response?.result || null;
   } catch (err) {
     console.error('Failed to read result from disk:', err);
@@ -186,11 +188,13 @@ browser.runtime.onMessage.addListener((message, _sender) => {
           return await saveSettings(message.settings);
 
         case 'getLastResult':
-          return await getLastResult();
+          return await getLastResult(message.url);
 
         case 'clearLastResult':
           try {
-            await sendNativeMessage({ action: 'clearStoredResult' });
+            const clearPayload = { action: 'clearStoredResult' };
+            if (message.url) clearPayload.url = message.url;
+            await sendNativeMessage(clearPayload);
           } catch (err) {
             console.error('Failed to clear stored result:', err);
           }

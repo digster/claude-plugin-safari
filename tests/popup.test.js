@@ -136,6 +136,9 @@ function createMocks({ tabUrl, lastResult, settings } = {}) {
     }
   };
 
+  // Track getLastResult messages for URL verification
+  const getLastResultMessages = [];
+
   // Global browser mock — configurable per test
   global.browser = {
     tabs: {
@@ -147,11 +150,12 @@ function createMocks({ tabUrl, lastResult, settings } = {}) {
     },
     runtime: {
       sendMessage(msg) {
-        // Route based on action, matching popup.js's Promise-based sendMessage usage
-        if (msg.action === 'getSettings') {
-          return Promise.resolve(settings || { prefix: 'Summarize' });
-        } else if (msg.action === 'getLastResult') {
+        // Track getLastResult messages so tests can verify URL is included
+        if (msg.action === 'getLastResult') {
+          getLastResultMessages.push(msg);
           return Promise.resolve(lastResult || null);
+        } else if (msg.action === 'getSettings') {
+          return Promise.resolve(settings || { prefix: 'Summarize' });
         } else {
           return Promise.resolve(null);
         }
@@ -166,6 +170,8 @@ function createMocks({ tabUrl, lastResult, settings } = {}) {
       }
     }
   };
+
+  mocks.getLastResultMessages = getLastResultMessages;
   global.chrome = global.browser;
 
   // Mock timers — capture callbacks for manual invocation
@@ -233,15 +239,31 @@ async function runTests() {
     );
   }
 
-  // Test 2: Mismatched URL — nothing shown
+  // Test 1b: getLastResult is called with the current tab URL
+  {
+    const mocks = createMocks({
+      tabUrl: 'https://example.com/specific-page',
+      lastResult: null
+    });
+    requireFreshPopup();
+    await mocks.domContentLoadedCb();
+
+    assert(
+      mocks.getLastResultMessages.length > 0,
+      'getLastResult was called during init'
+    );
+    assertEqual(
+      mocks.getLastResultMessages[0].url,
+      'https://example.com/specific-page',
+      'getLastResult is called with the current tab URL'
+    );
+  }
+
+  // Test 2: Per-URL miss — nothing shown (simulates no cached result for this URL)
   {
     const mocks = createMocks({
       tabUrl: 'https://example.com/page-A',
-      lastResult: {
-        status: 'complete',
-        url: 'https://other-site.com/page-B',
-        response: { result: 'Old result' }
-      }
+      lastResult: null  // per-URL cache miss returns null
     });
     requireFreshPopup();
 
@@ -249,11 +271,11 @@ async function runTests() {
 
     assert(
       mocks.elements['result-area'].classList.contains('hidden'),
-      'mismatched URL + complete → result area stays hidden'
+      'per-URL miss → result area stays hidden'
     );
     assert(
       mocks.elements['loading'].classList.contains('hidden'),
-      'mismatched URL + complete → loading stays hidden'
+      'per-URL miss → loading stays hidden'
     );
   }
 

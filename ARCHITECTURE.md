@@ -71,7 +71,17 @@ A Safari Web Extension that bridges the browser to a local Claude CLI binary. Th
 }
 ```
 
-**Native disk** (`<container>/Library/Application Support/ClaudeAssistant/lastResult.json`):
+**Native disk** (`<container>/Library/Application Support/ClaudeAssistant/`):
+```
+ClaudeAssistant/
+├── lastResult.json          # Most-recent result pointer (used by pop-out view)
+└── results/                 # Per-URL result cache (SHA-256-hashed filenames)
+    ├── a1b2c3d4e5f6a7b8.json   # SHA-256(url)[:16] → cached result
+    ├── f9e8d7c6b5a49382.json
+    └── ...                     # LRU-evicted at 25 files max
+```
+
+Each file contains:
 ```javascript
 {
   result: {
@@ -84,6 +94,8 @@ A Safari Web Extension that bridges the browser to a local Claude CLI binary. Th
   }
 }
 ```
+
+`lastResult.json` is always written alongside the per-URL file so the pop-out view (`result.js`) can load the most recent result without knowing the URL. The popup always fetches by URL for cache hits when revisiting pages.
 
 ## Key Design Decisions
 
@@ -98,6 +110,7 @@ A Safari Web Extension that bridges the browser to a local Claude CLI binary. Th
 | `--effort` and `--model` flags | Optional CLI flags forwarded only when non-empty. Lets users control response quality/cost and model selection without editing the CLI directly |
 | Helper script version detection | Containing app reads the installed script and checks for `"shift 3"` to determine if it's v2 (supports extra args). Outdated scripts trigger a reinstall notice. The check now triggers for any extra CLI flags (allowedTools, effort, or model) |
 | `lastResult` on native disk (not browser.storage.local) | Safari MV3 has a ~5MB `browser.storage.local` quota. Claude responses (10-100KB+) caused `Exceeded storage quota` errors. Result data now goes through `sendNativeMessage` → Swift handler → JSON file on disk. The extension's sandboxed Application Support directory is accessible without entitlements |
+| Per-URL result cache (`results/` dir) | A singleton `lastResult.json` was overwritten on each new query — revisiting a previous URL found no cache. Now results are also stored in `results/<SHA256-hash>.json` keyed by URL. The popup passes the tab URL when fetching, hitting the per-URL cache. LRU eviction at 25 files (~2.5MB worst case) bounds disk usage. `lastResult.json` remains as a "most recent" pointer for the pop-out view |
 | History capped at 25 entries, 100-char previews | Safeguard to keep `browser.storage.local` well within quota; history stays in browser storage since it's small |
 | `browser.*` API (not `chrome.*`) in extension code | Safari's Manifest V3 uses the `browser` namespace; `chrome.*` works for some APIs but `browser` is canonical |
 

@@ -94,3 +94,17 @@ Changes:
 3. **background.js**: Add `effort: ''` and `model: ''` to `DEFAULT_SETTINGS`, include in native payload
 4. **SafariWebExtensionHandler.swift**: Extract effort/model from message, append `--effort`/`--model` flags when non-empty, broaden v2 script check
 5. **tests/background.test.js**: 10 new tests (defaults, save/load, non-clobbering, native payload inclusion)
+
+## 2026-03-17 (session 10) — Per-URL Result Caching
+
+The extension uses a singleton `lastResult.json` — when a new URL is processed, the previous URL's result is overwritten. Going back to a previously-processed URL finds no cache.
+
+Fix: Store per-URL results in a `results/` subdirectory using SHA-256-hashed filenames. Keep `lastResult.json` as "most recent" pointer for pop-out view. Add LRU eviction (25 files max).
+
+Changes:
+1. **SafariWebExtensionHandler.swift**: Add `CryptoKit` import, `resultFileURL(for:)` SHA-256 helper, `evictOldResults()` LRU eviction, modify store/get/clear handlers to support per-URL cache
+2. **background.js**: `getLastResult(url)` accepts optional URL param, forward URL in message handler for get/clear
+3. **popup.js**: Remove `getLastResult` from initial `Promise.all`, fetch with URL after determining `currentUrl`, pass URL in poll requests
+4. **tests/background.test.js**: Per-URL mock with `perUrl` map, isolation tests, payload verification, handler forwarding
+5. **tests/popup.test.js**: Track `getLastResultMessages`, verify URL inclusion, update Test 2 for per-URL miss
+6. **ARCHITECTURE.md**: Document `results/` directory structure and per-URL caching
