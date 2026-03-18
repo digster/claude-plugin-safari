@@ -171,6 +171,14 @@ Changes:
 5. **settings.html/css/js**: Add "Browse Cache" secondary button
 6. **ARCHITECTURE.md/README.md**: Document new component and actions
 
+## 2026-03-18 (session 5) — Fix Cache Explorer URL + Icon
+
+The Cache Explorer page was added recently but was never registered in the Xcode project's build resources. When the button is clicked, Safari tries to load a URL pointing to a resource that doesn't exist in the bundled `.appex`, causing `NSURLErrorDomain error -1100`. Separately, the icon used for the Cache Explorer button is a square/columns icon instead of a list icon.
+
+Fix:
+1. **`project.pbxproj`**: Add 4 entries (PBXBuildFile, PBXFileReference, PBXGroup child, PBXResourcesBuildPhase) mirroring how `popup`/`settings` folders are registered
+2. **`popup.html`**: Replace sidebar/columns SVG with bulleted list icon (3 circles + 3 horizontal bars)
+
 ## 2026-03-18 (session 3) — Fix Spinner Hangs Forever After Canvas Badge Commit
 
 Commit `c11862c` replaced `setBadgeText` with canvas-composited dot overlays. This introduced two critical bugs: (1) `setBadge()` changed from sync to async and all call sites in `runClaude()` were `await`ed — badge rendering now blocks result delivery; (2) `createDotIcon()` sets `img.src` before `onload`/`onerror` handlers, and in Safari's extension background page `safari-web-extension://` image loads may not fire events — hanging the Promise forever.
