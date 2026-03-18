@@ -36,6 +36,8 @@ A Safari Web Extension that runs the [Claude CLI](https://docs.anthropic.com/en/
    - Set your preferred prefix prompt
    - Verify the Claude CLI path
    - Configure **Allowed Tools** — comma-separated list of CLI tools Claude can use without interactive prompting (default: `WebFetch,WebSearch`). Since the extension runs headlessly, tools that normally require permission approval must be pre-authorized here.
+   - Set **Effort** level — `low`, `medium`, `high`, or `max` (maps to `--effort` CLI flag). Leave empty for CLI default.
+   - Set **Model** — alias (`sonnet`, `opus`) or full name (`claude-sonnet-4-6`) (maps to `--model` CLI flag). Leave empty for CLI default.
 
 ## Usage
 

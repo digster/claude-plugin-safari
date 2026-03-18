@@ -5,7 +5,9 @@ const APP_IDENTIFIER = "com.digster.Claude-Assistant.Extension";
 const DEFAULT_SETTINGS = {
   prefix: 'Summarize',
   cliPath: '/Users/ishan/.local/bin/claude',
-  allowedTools: 'WebFetch,WebSearch'
+  allowedTools: 'WebFetch,WebSearch',
+  effort: '',
+  model: ''
 };
 
 // ── Storage helpers ──────────────────────────────────────────
@@ -111,7 +113,9 @@ async function runClaude(url) {
       prompt,
       cliPath: settings.cliPath,
       outputFormat: 'json',
-      allowedTools
+      allowedTools,
+      effort: settings.effort || '',
+      model: settings.model || ''
     });
 
     // Parse the response from the native handler

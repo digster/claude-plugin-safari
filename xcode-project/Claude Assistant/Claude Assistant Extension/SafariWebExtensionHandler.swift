@@ -58,6 +58,8 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         let prompt = message["prompt"] as? String ?? ""
         let outputFormat = message["outputFormat"] as? String ?? "json"
         let allowedTools = message["allowedTools"] as? [String] ?? []
+        let effort = message["effort"] as? String ?? ""
+        let model = message["model"] as? String ?? ""
 
         // Locate the Application Scripts directory for this extension
         guard let scriptsDir = try? FileManager.default.url(
@@ -83,12 +85,13 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
             return
         }
 
-        // If allowedTools are requested, verify the helper script supports extra args (v2)
-        if !allowedTools.isEmpty {
+        // If extra CLI flags are requested, verify the helper script supports extra args (v2)
+        let needsExtraArgs = !allowedTools.isEmpty || !effort.isEmpty || !model.isEmpty
+        if needsExtraArgs {
             if let scriptContent = try? String(contentsOf: scriptURL, encoding: .utf8),
                !scriptContent.contains("shift 3") {
                 sendResponse(context: context, data: [
-                    "error": "Helper script is outdated and doesn't support --allowedTools. Please open the Claude Assistant app and click 'Reinstall Helper Script'.",
+                    "error": "Helper script is outdated and doesn't support extra CLI flags. Please open the Claude Assistant app and click 'Reinstall Helper Script'.",
                     "setupRequired": true
                 ])
                 return
@@ -104,15 +107,23 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
             task.standardOutput = stdoutPipe.fileHandleForWriting
             task.standardError = stderrPipe.fileHandleForWriting
 
-            // Build arguments: base args + --allowedTools flags for each tool
+            // Build arguments: base args + optional CLI flags
             var arguments = [cliPath, prompt, outputFormat]
             for tool in allowedTools {
                 arguments.append("--allowedTools")
                 arguments.append(tool)
             }
+            if !effort.isEmpty {
+                arguments.append("--effort")
+                arguments.append(effort)
+            }
+            if !model.isEmpty {
+                arguments.append("--model")
+                arguments.append(model)
+            }
 
-            os_log(.default, log: log, "Executing helper script with CLI path: %{public}@, allowedTools: %{public}@",
-                   cliPath, allowedTools.joined(separator: ", "))
+            os_log(.default, log: log, "Executing helper script with CLI path: %{public}@, allowedTools: %{public}@, effort: %{public}@, model: %{public}@",
+                   cliPath, allowedTools.joined(separator: ", "), effort, model)
 
             task.execute(withArguments: arguments) { [weak self] error in
                 guard let self = self else { return }

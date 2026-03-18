@@ -79,3 +79,18 @@ Fix: Wrap all `browser.storage.local` calls with try/catch + sensible fallbacks:
 ## 2026-03-17 (session 8) — Fix Pop-out Page Empty + Cached Results Not Showing
 
 Fix two bugs: (1) pop-out page (result.html) remains empty even when popup just displayed content, (2) cached result not restoring in popup when reopening for a previously-queried URL. Root cause: background.js message listener uses callback-based `sendResponse` + `return true` pattern unreliable in Safari MV3. Fix by switching to Promise-based listener, adding retry logic to result.js, and adding tests.
+
+## 2026-03-17 (session 9) — Add Effort & Model Settings
+
+Add two new optional settings that map to Claude CLI flags:
+- **Effort** (`--effort <level>`) — text input, valid values: `low`, `medium`, `high`, `max`
+- **Model** (`--model <model>`) — text input, accepts alias (`sonnet`, `opus`) or full name (`claude-sonnet-4-6`)
+
+Both are optional — empty means "use CLI defaults, don't send the flag."
+
+Changes:
+1. **settings.html**: Add effort and model text inputs with placeholders and hint text
+2. **settings.js**: Add DOM refs, load/save for `effort` and `model` fields
+3. **background.js**: Add `effort: ''` and `model: ''` to `DEFAULT_SETTINGS`, include in native payload
+4. **SafariWebExtensionHandler.swift**: Extract effort/model from message, append `--effort`/`--model` flags when non-empty, broaden v2 script check
+5. **tests/background.test.js**: 10 new tests (defaults, save/load, non-clobbering, native payload inclusion)

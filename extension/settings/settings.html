@@ -36,6 +36,20 @@
       <p class="hint">Comma-separated list of tools Claude can use without prompting. Common: WebFetch, WebSearch, Read, Bash.</p>
     </div>
 
+    <!-- Effort level -->
+    <div class="field">
+      <label for="effort-input">Effort</label>
+      <input type="text" id="effort-input" placeholder="e.g., low, medium, high, max">
+      <p class="hint">Controls how much effort Claude spends on a response. Leave empty for CLI default.</p>
+    </div>
+
+    <!-- Model -->
+    <div class="field">
+      <label for="model-input">Model</label>
+      <input type="text" id="model-input" placeholder="e.g., sonnet, opus, claude-sonnet-4-6">
+      <p class="hint">Which Claude model to use. Accepts aliases (sonnet, opus) or full names. Leave empty for CLI default.</p>
+    </div>
+
     <!-- Actions -->
     <div class="actions">
       <button id="save-btn" class="primary-btn">Save Settings</button>

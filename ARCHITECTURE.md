@@ -32,7 +32,7 @@ A Safari Web Extension that bridges the browser to a local Claude CLI binary. Th
 |------|---------|
 | `extension/background.js` | Central message router. Handles all actions (`runClaude`, `getSettings`, `saveSettings`, `verifyCli`, etc.). Bridges to native handler via `browser.runtime.sendNativeMessage()`. Stores results for recovery. |
 | `extension/popup/popup.js` | Toolbar popup UI. Shows prefix + URL preview, "Ask Claude" button, loading state with elapsed timer, result display with copy/pop-out. |
-| `extension/settings/settings.js` | Configuration page. Prefix textarea, CLI path input with verify button. |
+| `extension/settings/settings.js` | Configuration page. Prefix textarea, CLI path input with verify button, allowed tools, effort level, and model selection. |
 | `extension/result/result.js` | Full-page pop-out for long responses. Loads last result from storage, renders with markdown. |
 
 ### Native Layer (Swift)
@@ -48,9 +48,9 @@ A Safari Web Extension that bridges the browser to a local Claude CLI binary. Th
 
 1. User clicks extension icon → `popup.js` loads, queries active tab URL
 2. User clicks "Ask Claude" → `popup.js` sends `runClaude` message to `background.js`
-3. `background.js` reads settings, builds prompt string, parses `allowedTools` (comma-separated → array), calls `browser.runtime.sendNativeMessage()`
-4. `SafariWebExtensionHandler.swift` receives message, builds argument list `[cliPath, prompt, outputFormat, --allowedTools, tool1, ...]`, runs `run-claude.sh` via `NSUserUnixTask`
-5. Helper script (v2) uses `shift 3` + `"$@"` to forward extra CLI flags; executes `claude -p "<prompt>" --output-format json --allowedTools <tool> ...` outside the sandbox; output piped back to handler → `background.js` → stored on native disk via `storeResult` action → sent to `popup.js`
+3. `background.js` reads settings, builds prompt string, parses `allowedTools` (comma-separated → array), includes `effort` and `model` strings, calls `browser.runtime.sendNativeMessage()`
+4. `SafariWebExtensionHandler.swift` receives message, builds argument list `[cliPath, prompt, outputFormat, --allowedTools, tool1, ..., --effort, level, --model, name]`, runs `run-claude.sh` via `NSUserUnixTask`. `--effort` and `--model` flags are only appended when non-empty.
+5. Helper script (v2) uses `shift 3` + `"$@"` to forward extra CLI flags; executes `claude -p "<prompt>" --output-format json --allowedTools <tool> --effort <level> --model <name> ...` outside the sandbox; output piped back to handler → `background.js` → stored on native disk via `storeResult` action → sent to `popup.js`
 6. `popup.js` renders result, shows metadata (cost, tokens, duration)
 
 ### Storage Schema
@@ -61,7 +61,9 @@ A Safari Web Extension that bridges the browser to a local Claude CLI binary. Th
   settings: {
     prefix: "Summarize",          // Prompt prefix text
     cliPath: "/path/to/claude",   // CLI binary location
-    allowedTools: "WebFetch,WebSearch" // Comma-separated tools pre-authorized via --allowedTools
+    allowedTools: "WebFetch,WebSearch", // Comma-separated tools pre-authorized via --allowedTools
+    effort: "",                    // Effort level: "low", "medium", "high", "max" (empty = CLI default)
+    model: ""                      // Model alias or full name: "sonnet", "opus", "claude-sonnet-4-6" (empty = CLI default)
   },
   history: [                       // Capped at 25 entries, 100-char previews
     { prompt: "...", url: "...", timestamp: 123, resultPreview: "..." }
@@ -93,7 +95,8 @@ A Safari Web Extension that bridges the browser to a local Claude CLI binary. Th
 | Helper script installed via NSSavePanel | The containing app uses `NSSavePanel` to get user authorization to write `run-claude.sh` into `~/Library/Application Scripts/<extension-bundle-id>/` — Apple's recommended pattern for sandboxed script installation |
 | `--output-format json` from CLI | Structured response includes cost, token counts, duration for richer UI metadata |
 | `--allowedTools` pre-authorization | CLI runs headlessly (no TTY) so interactive permission prompts can't be answered. Tools like `WebFetch` are pre-authorized via `--allowedTools` to avoid blocking |
-| Helper script version detection | Containing app reads the installed script and checks for `"shift 3"` to determine if it's v2 (supports extra args). Outdated scripts trigger a reinstall notice |
+| `--effort` and `--model` flags | Optional CLI flags forwarded only when non-empty. Lets users control response quality/cost and model selection without editing the CLI directly |
+| Helper script version detection | Containing app reads the installed script and checks for `"shift 3"` to determine if it's v2 (supports extra args). Outdated scripts trigger a reinstall notice. The check now triggers for any extra CLI flags (allowedTools, effort, or model) |
 | `lastResult` on native disk (not browser.storage.local) | Safari MV3 has a ~5MB `browser.storage.local` quota. Claude responses (10-100KB+) caused `Exceeded storage quota` errors. Result data now goes through `sendNativeMessage` → Swift handler → JSON file on disk. The extension's sandboxed Application Support directory is accessible without entitlements |
 | History capped at 25 entries, 100-char previews | Safeguard to keep `browser.storage.local` well within quota; history stays in browser storage since it's small |
 | `browser.*` API (not `chrome.*`) in extension code | Safari's Manifest V3 uses the `browser` namespace; `chrome.*` works for some APIs but `browser` is canonical |

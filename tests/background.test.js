@@ -246,6 +246,55 @@ async function runTests() {
   // Restore original mock
   browser.runtime.sendNativeMessage = originalSendNative;
 
+  // Test: DEFAULT_SETTINGS includes effort and model
+  console.log('\neffort and model defaults:');
+  assert(bg.DEFAULT_SETTINGS.effort === '', 'default effort is empty string');
+  assert(bg.DEFAULT_SETTINGS.model === '', 'default model is empty string');
+
+  // Test: save/load round-trip for effort and model
+  console.log('\neffort and model save/load:');
+  delete mockStorage.settings;
+  await bg.saveSettings({ effort: 'high', model: 'sonnet' });
+  const effortModelSettings = await bg.getSettings();
+  assertEqual(effortModelSettings.effort, 'high', 'saves and retrieves effort');
+  assertEqual(effortModelSettings.model, 'sonnet', 'saves and retrieves model');
+
+  // Test: effort and model don't clobber existing settings
+  console.log('\neffort and model don\'t clobber:');
+  delete mockStorage.settings;
+  await bg.saveSettings({ prefix: 'Explain', allowedTools: 'Read' });
+  await bg.saveSettings({ effort: 'max', model: 'opus' });
+  const nonClobbered = await bg.getSettings();
+  assertEqual(nonClobbered.prefix, 'Explain', 'effort/model save does not clobber prefix');
+  assertEqual(nonClobbered.allowedTools, 'Read', 'effort/model save does not clobber allowedTools');
+  assertEqual(nonClobbered.effort, 'max', 'effort is saved alongside existing settings');
+  assertEqual(nonClobbered.model, 'opus', 'model is saved alongside existing settings');
+
+  // Test: effort and model included in native payload
+  console.log('\neffort and model in native payload:');
+  delete mockStorage.settings;
+  await bg.saveSettings({ effort: 'high', model: 'claude-sonnet-4-6' });
+  capturedNativePayload = null;
+  browser.runtime.sendNativeMessage = async (_id, payload) => {
+    if (payload.action && ['storeResult', 'getStoredResult', 'clearStoredResult'].includes(payload.action)) {
+      return originalSendNative(_id, payload);
+    }
+    capturedNativePayload = payload;
+    return { result: 'mock response' };
+  };
+  await bg.runClaude('https://example.com');
+  assertEqual(capturedNativePayload.effort, 'high', 'effort is included in native payload');
+  assertEqual(capturedNativePayload.model, 'claude-sonnet-4-6', 'model is included in native payload');
+
+  // Test: empty effort and model still sent as empty strings
+  console.log('\nempty effort and model in native payload:');
+  await bg.saveSettings({ effort: '', model: '' });
+  capturedNativePayload = null;
+  await bg.runClaude('https://example.com');
+  assertEqual(capturedNativePayload.effort, '', 'empty effort is sent as empty string');
+  assertEqual(capturedNativePayload.model, '', 'empty model is sent as empty string');
+  browser.runtime.sendNativeMessage = originalSendNative;
+
   // Test: saveLastResult handles native message failure gracefully
   console.log('\nsaveLastResult error handling:');
   browser.runtime.sendNativeMessage = async () => {
