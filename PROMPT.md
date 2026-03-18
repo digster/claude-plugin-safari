@@ -159,6 +159,18 @@ Replace `setBadgeText`/`setBadgeBackgroundColor` with `setIcon({ imageData })`:
 4. Cache generated `ImageData` so canvas work happens once per color
 5. Popup sends single unconditional `clearBadge` with `tabId` on init (replaces per-branch URL-based clears)
 
+## 2026-03-18 (session 4) — Cache Explorer + Remove LRU Eviction Cap
+
+Add a full-page Cache Explorer (sidebar+detail view) for browsing all cached Claude results. Remove the 25-file LRU eviction cap since native disk has no meaningful size constraint.
+
+Changes:
+1. **SafariWebExtensionHandler.swift**: Add `listCachedResults` (lists all per-URL cache files sorted by modification date with metadata) and `deleteCachedResult` (deletes single file by URL via SHA-256 lookup) actions. Remove `evictOldResults()` method and its call from `handleStoreResult()`
+2. **background.js**: Add `listCachedResults()`/`deleteCachedResult(url)` helper functions + message handler cases
+3. **cache-explorer/**: NEW 3-file full-page (HTML/CSS/JS) with 300px sidebar listing all cached URLs (status dots, timestamps, cost) + detail panel showing full rendered markdown content with metadata. Copy/Delete/Clear All/Refresh functionality
+4. **popup.html/js/css**: Add cache explorer icon button in header
+5. **settings.html/css/js**: Add "Browse Cache" secondary button
+6. **ARCHITECTURE.md/README.md**: Document new component and actions
+
 ## 2026-03-18 (session 3) — Fix Spinner Hangs Forever After Canvas Badge Commit
 
 Commit `c11862c` replaced `setBadgeText` with canvas-composited dot overlays. This introduced two critical bugs: (1) `setBadge()` changed from sync to async and all call sites in `runClaude()` were `await`ed — badge rendering now blocks result delivery; (2) `createDotIcon()` sets `img.src` before `onload`/`onerror` handlers, and in Safari's extension background page `safari-web-extension://` image loads may not fire events — hanging the Promise forever.

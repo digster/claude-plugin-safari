@@ -10,6 +10,7 @@ A Safari Web Extension that runs the [Claude CLI](https://docs.anthropic.com/en/
 - **Result recovery** — if the popup closes while Claude is running, the result is preserved and shown when you reopen
 - **History** — last 50 queries stored for reference
 - **Copy to clipboard** — one-click copy of the response
+- **Cache Explorer** — full-page sidebar+detail view to browse, view, copy, and delete all cached results
 
 ## Requirements
 
@@ -72,6 +73,7 @@ extension/           # Web extension source (JS, HTML, CSS)
 ├── popup/           # Toolbar popup UI
 ├── settings/        # Configuration page
 ├── result/          # Full-page pop-out result view
+├── cache-explorer/  # Cache Explorer — browse all cached results
 └── icons/           # Extension icons
 xcode-project/       # Generated Xcode project with Swift native handler
 tests/               # Unit tests

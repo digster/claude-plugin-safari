@@ -102,6 +102,35 @@ async function clearAllCache() {
   return { success: true, clearedCount };
 }
 
+// ── Cache explorer helpers ───────────────────────────────────
+
+/**
+ * List all per-URL cached results from native disk.
+ * Returns { results: [...] } sorted by modification date (newest first).
+ */
+async function listCachedResults() {
+  try {
+    const response = await sendNativeMessage({ action: 'listCachedResults' });
+    return response || { results: [] };
+  } catch (err) {
+    console.error('Failed to list cached results:', err);
+    return { results: [] };
+  }
+}
+
+/**
+ * Delete a single per-URL cached result by URL.
+ */
+async function deleteCachedResult(url) {
+  try {
+    const response = await sendNativeMessage({ action: 'deleteCachedResult', url });
+    return response || { success: false };
+  } catch (err) {
+    console.error('Failed to delete cached result:', err);
+    return { success: false, error: err.message || String(err) };
+  }
+}
+
 // ── Badge notification (toolbar icon dot) ───────────────────
 
 // Maps URL → tabId so we can set/clear badges when fetches complete
@@ -411,6 +440,12 @@ browser.runtime.onMessage.addListener((message, _sender) => {
         case 'verifyCli':
           return await verifyCli(message.cliPath);
 
+        case 'listCachedResults':
+          return await listCachedResults();
+
+        case 'deleteCachedResult':
+          return await deleteCachedResult(message.url);
+
         default:
           return { error: `Unknown action: ${message.action}` };
       }
@@ -478,6 +513,8 @@ if (typeof module !== 'undefined' && module.exports) {
     getHistory,
     addToHistory,
     clearAllCache,
+    listCachedResults,
+    deleteCachedResult,
     runClaude,
     cancelClaude,
     verifyCli,

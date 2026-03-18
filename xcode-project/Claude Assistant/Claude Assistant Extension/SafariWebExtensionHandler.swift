@@ -11,6 +11,8 @@
 //    - getStoredResult: reads the stored result from disk
 //    - clearStoredResult: deletes the stored result file
 //    - clearAllResults: deletes lastResult.json and all per-URL cache files in results/
+//    - listCachedResults: lists all per-URL cached results with metadata (for Cache Explorer)
+//    - deleteCachedResult: deletes a single per-URL cached result by URL
 //
 
 import SafariServices
@@ -50,6 +52,10 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
             handleClearStoredResult(context: context, message: msg)
         case "clearAllResults":
             handleClearAllResults(context: context)
+        case "listCachedResults":
+            handleListCachedResults(context: context)
+        case "deleteCachedResult":
+            handleDeleteCachedResult(context: context, message: msg)
         default:
             sendResponse(context: context, data: ["error": "Unknown action: \(action)"])
         }
@@ -296,47 +302,11 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
             }
         }
 
-        // SHA-256 hash the URL, take first 16 hex chars (64 bits — collision-safe for 25 files)
+        // SHA-256 hash the URL, take first 16 hex chars (64 bits — collision-safe for typical usage)
         let digest = SHA256.hash(data: Data(url.utf8))
         let hashPrefix = digest.prefix(8).map { String(format: "%02x", $0) }.joined()
 
         return resultsDir.appendingPathComponent("\(hashPrefix).json")
-    }
-
-    /// Evicts oldest per-URL result files beyond the 25-file cap.
-    /// Sorts by modification date and deletes the oldest excess files.
-    private func evictOldResults() {
-        guard let storageDir = storageDirectory() else { return }
-
-        let resultsDir = storageDir.appendingPathComponent("results")
-        let fm = FileManager.default
-
-        guard let files = try? fm.contentsOfDirectory(
-            at: resultsDir,
-            includingPropertiesForKeys: [.contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else { return }
-
-        // Only evict if over the cap
-        let maxFiles = 25
-        guard files.count > maxFiles else { return }
-
-        // Sort by modification date (newest first)
-        let sorted = files.compactMap { url -> (URL, Date)? in
-            guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey]),
-                  let date = values.contentModificationDate else { return nil }
-            return (url, date)
-        }.sorted { $0.1 > $1.1 }
-
-        // Delete files beyond the cap
-        for (url, _) in sorted.dropFirst(maxFiles) {
-            do {
-                try fm.removeItem(at: url)
-                os_log(.default, log: log, "Evicted old result cache: %{public}@", url.lastPathComponent)
-            } catch {
-                os_log(.error, log: log, "Failed to evict result cache: %{public}@", error.localizedDescription)
-            }
-        }
     }
 
     /// Write a result dictionary to lastResult.json on disk.
@@ -363,7 +333,6 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
                let url = resultDict["url"] as? String,
                let perUrlFile = resultFileURL(for: url) {
                 try jsonData.write(to: perUrlFile, options: .atomic)
-                evictOldResults()
             }
 
             os_log(.default, log: log, "Stored result to disk (%{public}d bytes)", jsonData.count)
@@ -506,6 +475,87 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
 
         os_log(.default, log: log, "Cleared all cached results: %{public}d files deleted", clearedCount)
         sendResponse(context: context, data: ["success": true, "clearedCount": clearedCount])
+    }
+
+    // MARK: - Cache Explorer Actions
+
+    /// List all per-URL cached results with metadata, sorted by modification date (newest first).
+    /// Each entry includes the parsed JSON content and a `_modified` timestamp (ms since epoch).
+    /// Used by the Cache Explorer page to display all cached results.
+    private func handleListCachedResults(context: NSExtensionContext) {
+        guard let storageDir = storageDirectory() else {
+            sendResponse(context: context, data: ["results": [Any]()])
+            return
+        }
+
+        let resultsDir = storageDir.appendingPathComponent("results")
+        let fm = FileManager.default
+
+        guard let files = try? fm.contentsOfDirectory(
+            at: resultsDir,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            sendResponse(context: context, data: ["results": [Any]()])
+            return
+        }
+
+        // Sort by modification date (newest first)
+        let sorted = files.compactMap { url -> (URL, Date)? in
+            guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey]),
+                  let date = values.contentModificationDate else { return nil }
+            return (url, date)
+        }.sorted { $0.1 > $1.1 }
+
+        // Parse each file and append modification timestamp
+        var results: [[String: Any]] = []
+        for (fileURL, modDate) in sorted {
+            do {
+                let jsonData = try Data(contentsOf: fileURL)
+                if var wrapper = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+                    // Add modification timestamp (ms since epoch) for the UI
+                    wrapper["_modified"] = Int64(modDate.timeIntervalSince1970 * 1000)
+                    wrapper["_filename"] = fileURL.lastPathComponent
+                    results.append(wrapper)
+                }
+            } catch {
+                os_log(.error, log: log, "Failed to read cached result %{public}@: %{public}@",
+                       fileURL.lastPathComponent, error.localizedDescription)
+            }
+        }
+
+        os_log(.default, log: log, "Listed %{public}d cached results", results.count)
+        sendResponse(context: context, data: ["results": results])
+    }
+
+    /// Delete a single per-URL cached result by URL.
+    /// Uses the same SHA-256 hash lookup as other per-URL operations.
+    private func handleDeleteCachedResult(context: NSExtensionContext, message: [String: Any]) {
+        guard let url = message["url"] as? String else {
+            sendResponse(context: context, data: ["success": false, "error": "No url provided"])
+            return
+        }
+
+        guard let fileURL = resultFileURL(for: url) else {
+            sendResponse(context: context, data: ["success": false, "error": "Cannot resolve file path"])
+            return
+        }
+
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: fileURL.path) else {
+            // File already gone — treat as success
+            sendResponse(context: context, data: ["success": true])
+            return
+        }
+
+        do {
+            try fm.removeItem(at: fileURL)
+            os_log(.default, log: log, "Deleted cached result for URL: %{public}@", url)
+            sendResponse(context: context, data: ["success": true])
+        } catch {
+            os_log(.error, log: log, "Failed to delete cached result: %{public}@", error.localizedDescription)
+            sendResponse(context: context, data: ["success": false, "error": error.localizedDescription])
+        }
     }
 
     // MARK: - Response Helper

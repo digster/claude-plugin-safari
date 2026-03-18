@@ -2,6 +2,7 @@
 
 const askBtn = document.getElementById('ask-btn');
 const settingsBtn = document.getElementById('settings-btn');
+const cacheExplorerBtn = document.getElementById('cache-explorer-btn');
 const prefixDisplay = document.getElementById('prefix-display');
 const urlDisplay = document.getElementById('url-display');
 const loadingEl = document.getElementById('loading');
@@ -112,6 +113,12 @@ stopBtn.addEventListener('click', async () => {
 
 settingsBtn.addEventListener('click', () => {
   browser.runtime.openOptionsPage();
+});
+
+cacheExplorerBtn.addEventListener('click', () => {
+  browser.tabs.create({
+    url: browser.runtime.getURL('cache-explorer/cache-explorer.html')
+  });
 });
 
 copyBtn.addEventListener('click', () => {

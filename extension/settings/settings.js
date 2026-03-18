@@ -9,6 +9,7 @@ const verifyBtn = document.getElementById('verify-btn');
 const verifyStatus = document.getElementById('verify-status');
 const saveBtn = document.getElementById('save-btn');
 const clearCacheBtn = document.getElementById('clear-cache-btn');
+const cacheExplorerBtn = document.getElementById('cache-explorer-btn');
 const messageEl = document.getElementById('message');
 
 // ── Load current settings on page open ──────────────────────
@@ -44,6 +45,14 @@ saveBtn.addEventListener('click', async () => {
   } else {
     showMessage('Settings saved.', 'success');
   }
+});
+
+// ── Browse cache ────────────────────────────────────────────
+
+cacheExplorerBtn.addEventListener('click', () => {
+  browser.tabs.create({
+    url: browser.runtime.getURL('cache-explorer/cache-explorer.html')
+  });
 });
 
 // ── Clear all cache ─────────────────────────────────────────

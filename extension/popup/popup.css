@@ -30,6 +30,12 @@ h1 {
   color: #fff;
 }
 
+.header-btns {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .icon-btn {
   background: none;
   border: none;
