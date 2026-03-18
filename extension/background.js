@@ -119,11 +119,25 @@ async function createDotIcon(size, color) {
   if (dotIconCache[key]) return dotIconCache[key];
 
   const img = new Image();
-  img.src = browser.runtime.getURL(`icons/icon-${size}.png`);
-  await new Promise((resolve, reject) => {
+
+  // Attach handlers BEFORE setting src to avoid race conditions where
+  // the image loads synchronously (from cache) before handlers exist
+  const loaded = new Promise((resolve, reject) => {
     img.onload = resolve;
     img.onerror = reject;
   });
+  img.src = browser.runtime.getURL(`icons/icon-${size}.png`);
+
+  // If already complete (cached by browser), skip the wait;
+  // otherwise await with a timeout so we never hang forever
+  if (!img.complete) {
+    await Promise.race([
+      loaded,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Image load timeout')), 3000)
+      )
+    ]);
+  }
 
   const canvas = document.createElement('canvas');
   canvas.width = size;
@@ -250,7 +264,7 @@ async function runClaude(url, tabId) {
     // Check if request was cancelled while CLI was running
     const currentState = await getLastResult(url);
     if (currentState?.status === 'cancelled') {
-      await clearBadgeForUrl(url);
+      clearBadgeForUrl(url);  // fire-and-forget — badge is cosmetic
       return currentState;
     }
 
@@ -267,7 +281,8 @@ async function runClaude(url, tabId) {
     await saveLastResult(result);
 
     // Show green dot on toolbar icon so user knows result is ready
-    if (tabId != null) await setBadge(tabId, 'complete');
+    // Fire-and-forget — badge rendering must never block result delivery
+    if (tabId != null) setBadge(tabId, 'complete');
 
     // Add to history
     await addToHistory({
@@ -284,7 +299,7 @@ async function runClaude(url, tabId) {
     // Check if request was cancelled (cancel saves state before killing process)
     const currentState = await getLastResult(url);
     if (currentState?.status === 'cancelled') {
-      await clearBadgeForUrl(url);
+      clearBadgeForUrl(url);  // fire-and-forget — badge is cosmetic
       return currentState;
     }
 
@@ -297,7 +312,8 @@ async function runClaude(url, tabId) {
     await saveLastResult(errorResult);
 
     // Show red dot on toolbar icon for errors
-    if (tabId != null) await setBadge(tabId, 'error');
+    // Fire-and-forget — badge rendering must never block error delivery
+    if (tabId != null) setBadge(tabId, 'error');
 
     return errorResult;
   }

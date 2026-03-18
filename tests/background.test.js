@@ -136,18 +136,22 @@ const browser = {
 global.browser = browser;
 global.chrome = browser;
 
-// Mock Image constructor for canvas compositing in setBadge
+// Mock Image constructor for canvas compositing in setBadge.
+// Handlers are attached BEFORE src is set, so onload fires from the src setter.
 global.Image = class {
-  set onload(fn) {
-    this._onload = fn;
-    // Simulate immediate load completion on next microtask
-    Promise.resolve().then(() => fn());
-  }
+  constructor() { this._onload = null; this._onerror = null; this._complete = false; }
+  set onload(fn) { this._onload = fn; }
   get onload() { return this._onload; }
   set onerror(fn) { this._onerror = fn; }
   get onerror() { return this._onerror; }
-  set src(val) { this._src = val; }
+  set src(val) {
+    this._src = val;
+    this._complete = true;
+    // Simulate async image load completion (handlers are already attached)
+    if (this._onload) Promise.resolve().then(() => this._onload());
+  }
   get src() { return this._src; }
+  get complete() { return this._complete; }
 };
 
 // Mock document.createElement for canvas used by createDotIcon
@@ -818,6 +822,8 @@ async function runTests() {
     return { result: 'mock response' };
   };
   await bg.runClaude('https://badge-complete.com', 77);
+  // setBadge is fire-and-forget — flush microtasks so the async badge settles
+  await new Promise(r => setTimeout(r, 0));
   assert(browser.action._icons[77]?.imageData, 'runClaude complete sets dot icon');
   assert(browser.action._icons[77].imageData[16], 'runClaude complete icon has 16px');
 
@@ -833,6 +839,8 @@ async function runTests() {
     throw new Error('CLI failed');
   };
   await bg.runClaude('https://badge-error.com', 88);
+  // setBadge is fire-and-forget — flush microtasks so the async badge settles
+  await new Promise(r => setTimeout(r, 0));
   assert(browser.action._icons[88]?.imageData, 'runClaude error sets dot icon');
   assert(browser.action._icons[88].imageData[16], 'runClaude error icon has 16px');
 

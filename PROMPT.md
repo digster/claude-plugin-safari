@@ -158,3 +158,12 @@ Replace `setBadgeText`/`setBadgeBackgroundColor` with `setIcon({ imageData })`:
 3. Call `browser.action.setIcon({ imageData, tabId })` to apply per-tab
 4. Cache generated `ImageData` so canvas work happens once per color
 5. Popup sends single unconditional `clearBadge` with `tabId` on init (replaces per-branch URL-based clears)
+
+## 2026-03-18 (session 3) — Fix Spinner Hangs Forever After Canvas Badge Commit
+
+Commit `c11862c` replaced `setBadgeText` with canvas-composited dot overlays. This introduced two critical bugs: (1) `setBadge()` changed from sync to async and all call sites in `runClaude()` were `await`ed — badge rendering now blocks result delivery; (2) `createDotIcon()` sets `img.src` before `onload`/`onerror` handlers, and in Safari's extension background page `safari-web-extension://` image loads may not fire events — hanging the Promise forever.
+
+Fix:
+1. Make all `setBadge()`/`clearBadgeForUrl()` calls in `runClaude()` fire-and-forget (no `await`)
+2. Fix `createDotIcon()`: attach handlers before `img.src`, add `img.complete` check, add 3s timeout via `Promise.race`
+3. Update `Image` mock in tests to fire `onload` from `src` setter (matches handler-before-src pattern), add microtask flushes for fire-and-forget badge assertions
