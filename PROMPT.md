@@ -179,6 +179,10 @@ Fix:
 1. **`project.pbxproj`**: Add 4 entries (PBXBuildFile, PBXFileReference, PBXGroup child, PBXResourcesBuildPhase) mirroring how `popup`/`settings` folders are registered
 2. **`popup.html`**: Replace sidebar/columns SVG with bulleted list icon (3 circles + 3 horizontal bars)
 
+## 2026-03-19 (session 1) — Export Cached Summaries as Markdown
+
+Add export functionality to the Cache Explorer page. Two export modes: (1) single result — downloads as a `.md` file with metadata table + response content, (2) bulk export — creates a `.zip` archive containing individual `.md` files for all cached results. Uses vendored JSZip library (~97KB) placed in `extension/lib/`. Handles edge cases: error/cancelled results, empty responses, duplicate hostnames (deduplication suffix), invalid URLs (fallback filename). Register `lib/` folder in Xcode project so it's bundled into the `.appex`.
+
 ## 2026-03-18 (session 3) — Fix Spinner Hangs Forever After Canvas Badge Commit
 
 Commit `c11862c` replaced `setBadgeText` with canvas-composited dot overlays. This introduced two critical bugs: (1) `setBadge()` changed from sync to async and all call sites in `runClaude()` were `await`ed — badge rendering now blocks result delivery; (2) `createDotIcon()` sets `img.src` before `onload`/`onerror` handlers, and in Safari's extension background page `safari-web-extension://` image loads may not fire events — hanging the Promise forever.

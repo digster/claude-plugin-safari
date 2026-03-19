@@ -34,7 +34,8 @@ A Safari Web Extension that bridges the browser to a local Claude CLI binary. Th
 | `extension/popup/popup.js` | Toolbar popup UI. Shows prefix + URL preview, "Ask Claude" button, loading state with elapsed timer + Stop button, result display with copy/pop-out. Handles `cancelled` status in all restore paths (init, polling, click). Captures `tabId` from active tab and sends it with `runClaude` for badge scoping. Sends a single unconditional `clearBadge` with `tabId` on popup open (init). |
 | `extension/settings/settings.js` | Configuration page. Prefix textarea, CLI path input with verify button, allowed tools, effort level, model selection, and "Clear All Cache" button (nukes all disk cache + history). |
 | `extension/result/result.js` | Full-page pop-out for long responses. Loads last result from storage, renders with markdown. |
-| `extension/cache-explorer/cache-explorer.js` | Full-page sidebar+detail view for browsing all cached results. Lists all per-URL cache files sorted by recency, with status dots and metadata. Supports viewing, copying, deleting individual results, and clearing all cache. Opened via `browser.tabs.create()` from popup or settings. |
+| `extension/cache-explorer/cache-explorer.js` | Full-page sidebar+detail view for browsing all cached results. Lists all per-URL cache files sorted by recency, with status dots and metadata. Supports viewing, copying, exporting (single `.md` or bulk `.zip`), deleting individual results, and clearing all cache. Opened via `browser.tabs.create()` from popup or settings. |
+| `extension/lib/jszip.min.js` | Vendored JSZip v3.10.1 library for creating zip archives in the bulk export flow. Loaded via `<script>` tag in cache-explorer. |
 
 ### Native Layer (Swift)
 

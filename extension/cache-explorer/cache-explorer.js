@@ -11,7 +11,9 @@ const detailPrompt = document.getElementById('detail-prompt');
 const detailMeta = document.getElementById('detail-meta');
 const detailResult = document.getElementById('detail-result');
 const detailCopyBtn = document.getElementById('detail-copy-btn');
+const detailExportBtn = document.getElementById('detail-export-btn');
 const detailDeleteBtn = document.getElementById('detail-delete-btn');
+const exportAllBtn = document.getElementById('export-all-btn');
 
 // Currently selected result (full object from the list)
 let selectedResult = null;
@@ -46,6 +48,49 @@ detailCopyBtn.addEventListener('click', () => {
     detailCopyBtn.textContent = 'Copied!';
     setTimeout(() => { detailCopyBtn.textContent = 'Copy'; }, 1500);
   });
+});
+
+// ── Export: single result ────────────────────────────────────
+detailExportBtn.addEventListener('click', () => {
+  if (!selectedResult) return;
+  const markdown = formatResultAsMarkdown(selectedResult);
+  const result = selectedResult.result || selectedResult;
+  const hostname = hostnameFromUrl(result.url);
+  downloadFile(markdown, `claude-${hostname}.md`, 'text/markdown');
+
+  // Visual feedback matching the "Copied!" pattern
+  detailExportBtn.textContent = 'Exported!';
+  setTimeout(() => { detailExportBtn.textContent = 'Export'; }, 1500);
+});
+
+// ── Export: all results as zip ──────────────────────────────
+exportAllBtn.addEventListener('click', async () => {
+  if (cachedResults.length === 0) return;
+
+  exportAllBtn.disabled = true;
+  const zip = new JSZip();
+
+  // Track filenames for deduplication
+  const filenameCounts = {};
+
+  for (const item of cachedResults) {
+    const result = item.result || item;
+    const hostname = hostnameFromUrl(result.url);
+    const baseName = `claude-${hostname}`;
+
+    // Deduplicate filenames for same-hostname URLs
+    filenameCounts[baseName] = (filenameCounts[baseName] || 0) + 1;
+    const suffix = filenameCounts[baseName] > 1 ? `-${filenameCounts[baseName]}` : '';
+    const filename = `${baseName}${suffix}.md`;
+
+    zip.file(filename, formatResultAsMarkdown(item));
+  }
+
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const dateStr = new Date().toISOString().slice(0, 10);
+  downloadFile(blob, `claude-cache-export-${dateStr}.zip`, 'application/zip');
+
+  exportAllBtn.disabled = false;
 });
 
 detailDeleteBtn.addEventListener('click', async () => {
@@ -256,6 +301,100 @@ function formatTimestamp(ms) {
 
   // Older — show full date
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/**
+ * Trigger a file download via a temporary anchor element.
+ * Accepts either a string (converted to Blob) or an existing Blob.
+ */
+function downloadFile(content, filename, mimeType) {
+  const blob = content instanceof Blob ? content : new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Extract a sanitized hostname from a URL string for use in filenames.
+ * Falls back to 'unknown-url' for invalid or missing URLs.
+ */
+function hostnameFromUrl(url) {
+  if (!url) return 'unknown-url';
+  try {
+    return new URL(url).hostname || 'unknown-url';
+  } catch {
+    return 'unknown-url';
+  }
+}
+
+/**
+ * Format a cached result item as a markdown document.
+ * Includes a URL heading, metadata table, and the response content.
+ */
+function formatResultAsMarkdown(item) {
+  const result = item.result || item;
+  const response = result.response;
+  const url = result.url || 'Unknown URL';
+  const status = result.status || 'unknown';
+
+  const lines = [];
+
+  // Title
+  lines.push(`# ${url}`, '');
+
+  // Metadata table
+  lines.push('| Field | Value |', '|-------|-------|');
+  lines.push(`| Status | ${status} |`);
+
+  if (result.prompt) {
+    lines.push(`| Prompt | ${result.prompt} |`);
+  }
+  if (result.startTime) {
+    lines.push(`| Started | ${new Date(result.startTime).toISOString()} |`);
+  }
+  if (result.endTime) {
+    lines.push(`| Ended | ${new Date(result.endTime).toISOString()} |`);
+  }
+  if (result.startTime && result.endTime) {
+    const durationSec = Math.round((result.endTime - result.startTime) / 1000);
+    lines.push(`| Duration | ${durationSec}s |`);
+  } else if (response?.duration_ms) {
+    lines.push(`| Duration | ${Math.round(response.duration_ms / 1000)}s |`);
+  }
+  if (response?.cost_usd != null) {
+    lines.push(`| Cost | $${response.cost_usd.toFixed(4)} |`);
+  }
+  if (response?.input_tokens) {
+    lines.push(`| Input Tokens | ${response.input_tokens} |`);
+  }
+  if (response?.output_tokens) {
+    lines.push(`| Output Tokens | ${response.output_tokens} |`);
+  }
+
+  lines.push('', '---', '');
+
+  // Response content — handle edge cases by status
+  if (status === 'error') {
+    const errorMsg = result.error || response?.error || 'Unknown error';
+    lines.push(`**Error:** ${errorMsg}`);
+  } else if (status === 'cancelled') {
+    lines.push('*Request was cancelled.*');
+  } else if (response && typeof response === 'object') {
+    const text = response.result || response.text || response.output || '';
+    lines.push(text || '*No response content available.*');
+  } else if (response) {
+    lines.push(String(response));
+  } else {
+    lines.push('*No response content available.*');
+  }
+
+  lines.push('');
+  return lines.join('\n');
 }
 
 async function sendMessage(message) {

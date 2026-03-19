@@ -24,6 +24,7 @@
 		86D77A9B2F6901BF009BEC45 /* icons in Resources */ = {isa = PBXBuildFile; fileRef = 86D77A952F6901BF009BEC45 /* icons */; };
 		86D77A9C2F6901BF009BEC45 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 86D77A962F6901BF009BEC45 /* manifest.json */; };
 		86D77A9D2F6901BF009BEC45 /* cache-explorer in Resources */ = {isa = PBXBuildFile; fileRef = 86D77A9E2F6901BF009BEC45 /* cache-explorer */; };
+		86D77A9F2F6901BF009BEC45 /* lib in Resources */ = {isa = PBXBuildFile; fileRef = 86D77AA02F6901BF009BEC45 /* lib */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -71,6 +72,7 @@
 		86D77A952F6901BF009BEC45 /* icons */ = {isa = PBXFileReference; lastKnownFileType = folder; name = icons; path = ../../../extension/icons; sourceTree = "<group>"; };
 		86D77A962F6901BF009BEC45 /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = manifest.json; path = ../../../extension/manifest.json; sourceTree = "<group>"; };
 		86D77A9E2F6901BF009BEC45 /* cache-explorer */ = {isa = PBXFileReference; lastKnownFileType = folder; name = cache-explorer; path = ../../../extension/cache-explorer; sourceTree = "<group>"; };
+		86D77AA02F6901BF009BEC45 /* lib */ = {isa = PBXFileReference; lastKnownFileType = folder; name = lib; path = ../../../extension/lib; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -153,6 +155,7 @@
 				86D77A952F6901BF009BEC45 /* icons */,
 				86D77A962F6901BF009BEC45 /* manifest.json */,
 				86D77A9E2F6901BF009BEC45 /* cache-explorer */,
+				86D77AA02F6901BF009BEC45 /* lib */,
 			);
 			name = Resources;
 			path = "Claude Assistant Extension";
@@ -264,6 +267,7 @@
 				86D77A9C2F6901BF009BEC45 /* manifest.json in Resources */,
 				86D77A982F6901BF009BEC45 /* popup in Resources */,
 				86D77A9D2F6901BF009BEC45 /* cache-explorer in Resources */,
+				86D77A9F2F6901BF009BEC45 /* lib in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

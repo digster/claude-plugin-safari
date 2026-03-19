@@ -12,6 +12,12 @@
     <div class="sidebar-header">
       <h2>Cached Results <span id="count-badge" class="count-badge">0</span></h2>
       <div class="sidebar-actions">
+        <button id="export-all-btn" class="sidebar-btn" title="Export All as Zip">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+            <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+          </svg>
+        </button>
         <button id="refresh-btn" class="sidebar-btn" title="Refresh">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
             <path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z"/>
@@ -53,6 +59,7 @@
       <!-- Action buttons -->
       <div class="detail-actions">
         <button id="detail-copy-btn" class="action-btn">Copy</button>
+        <button id="detail-export-btn" class="action-btn">Export</button>
         <button id="detail-delete-btn" class="action-btn danger">Delete</button>
       </div>
 
@@ -61,6 +68,7 @@
     </div>
   </main>
 
+  <script src="../lib/jszip.min.js"></script>
   <script src="cache-explorer.js"></script>
 </body>
 </html>
